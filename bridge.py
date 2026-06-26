@@ -205,14 +205,26 @@ def main():
         f.write(PLACEHOLDER)
         
     # 2. tmuxペインを分割してIDを取得
-    pane_a = run_tmux(['split-window', '-h', '-P', '-F', '#{pane_id}'])
-    print(f"Pane A: {pane_a}")
-    pane_b = run_tmux(['split-window', '-v', '-P', '-F', '#{pane_id}'])
-    print(f"Pane B: {pane_b}")
+    pane_left_top = run_tmux(['display-message', '-p', '#{pane_id}'])
+    
+    # 左ペインを右に分割して Aider A ペインを作成
+    pane_a = run_tmux(['split-window', '-h', '-t', pane_left_top, '-P', '-F', '#{pane_id}'])
+    print(f"Pane A (LeaderAI): {pane_a}")
+    
+    # Aider A ペインを下に分割して Aider B ペインを作成
+    pane_b = run_tmux(['split-window', '-v', '-t', pane_a, '-P', '-F', '#{pane_id}'])
+    print(f"Pane B (WorkerAI): {pane_b}")
+    
+    # 左ペインを下に分割して tail 用ペインを作成
+    pane_tail = run_tmux(['split-window', '-v', '-t', pane_left_top, '-P', '-F', '#{pane_id}'])
+    print(f"Pane Tail (conversation.md): {pane_tail}")
     
     time.sleep(2)
     
-    # 3. Aiderを起動 (各ディレクトリに cd してから起動)
+    # 3. tail -f の開始
+    send_keys(pane_tail, f"tail -f {CONVERSATION}")
+    
+    # 4. Aiderを起動 (各ディレクトリに cd してから起動)
     restore_files("a")
     restore_files("b")
     
