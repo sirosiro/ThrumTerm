@@ -81,22 +81,29 @@ def clean_response(inp_text, out_text):
     return out.lstrip(":,。、 \n")
 
 def build_prompt(agent_name, is_first=False):
-    # 余計なファイルを作らせないよう、output.txtのみを編集するように強く指示
+    # 英語の勝手なファイル名を作らせないよう、ファイル名は「output.txt」のみに限定することを厳しく指定
+    instruction_base = (
+        f"【絶対厳守】変更は必ず「{OUTPUT_FILE}」というファイル名に対してのみ行ってください。新しいファイル（例：英語名や別の拡張子のファイル）は絶対に作成・編集しないでください。\n"
+        f"回答は {OUTPUT_FILE} に書き込んでください。余計な挨拶や説明は一切不要です。"
+    )
+    
     if is_first:
         return (
             f"重要：{INPUT_FILE} の内容（議論のテーマ）を読み、それに対するあなたの意見を {OUTPUT_FILE} に書き込んでください。\n"
-            f"他のファイル（例：新しいファイルや {INPUT_FILE} 自体）は絶対に作成・編集しないでください。変更は {OUTPUT_FILE} のみに適用してください。余計な挨拶や説明は一切不要です。"
+            f"{instruction_base}"
         )
     else:
         if agent_name == "a":
             return (
                 f"重要：{INPUT_FILE} が更新されました。これに対するあなたの意見や議論を深める視点を {OUTPUT_FILE} に書き込んでください。\n"
-                f"他のファイルは絶対に作成・編集しないでください。変更は {OUTPUT_FILE} のみに適用してください。余計な挨拶や説明、相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。"
+                f"相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。\n"
+                f"{instruction_base}"
             )
         else:
             return (
                 f"重要：{INPUT_FILE} が更新されました。これに対するあなたの反論や同意、新たな視点を {OUTPUT_FILE} に書き込んでください。\n"
-                f"他のファイルは絶対に作成・編集しないでください。変更は {OUTPUT_FILE} のみに適用してください。余計な挨拶や説明、相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。"
+                f"相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。\n"
+                f"{instruction_base}"
             )
 
 def print_file_content(label, filepath):
