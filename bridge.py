@@ -89,7 +89,7 @@ def get_clean_response(pane, agent_name):
     wait_for_prompt_simple(pane)
     
     # それぞれのディレクトリからファイルを読み込む
-    dir_name = f"ai0{1 if agent_name == 'a' else 2}"
+    dir_name = "sandbox/LeaderAI" if agent_name == "a" else "sandbox/WorkerAI"
     inp_path = os.path.join(dir_name, INPUT_FILE)
     out_path = os.path.join(dir_name, OUTPUT_FILE)
     
@@ -102,8 +102,8 @@ def get_clean_response(pane, agent_name):
     return response
 
 def restore_files(agent_name):
-    # agent_configs/ 内のマスターから隔離作業ディレクトリ（sandbox/LeaderAI/sandbox/WorkerAI）にコピーして復元する
-    dir_name = f"ai0{1 if agent_name == 'a' else 2}"
+    # agent_configs/ 内のマスターから隔離作業ディレクトリにコピーして復元する
+    dir_name = "sandbox/LeaderAI" if agent_name == "a" else "sandbox/WorkerAI"
     
     persona_master = os.path.join("agent_configs", f"persona_{agent_name}.txt")
     manifest_master = os.path.join("agent_configs", f"manifest_{agent_name}.txt")
