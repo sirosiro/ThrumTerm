@@ -6,6 +6,7 @@ import subprocess
 import shutil
 
 THEME = sys.argv[1] if len(sys.argv) > 1 else "おにぎりをレンジで温める是非"
+MODEL = sys.argv[2] if len(sys.argv) > 2 else "ollama_chat/llama3.1:8b"
 
 CONVERSATION = "conversation.md"
 INPUT_FILE = "input.txt"
@@ -19,21 +20,42 @@ def run_tmux(args):
 def send_keys(pane, keys):
     subprocess.run(['tmux', 'send-keys', '-t', pane, keys, 'Enter'])
 
-def wait_for_prompt_simple(pane):
-    # 送信直後の誤認識を防ぐため、呼び出し側で先に sleep 3 しておくことを前提とする
+def get_history_size(pane):
+    try:
+        size_str = run_tmux(['display-message', '-t', pane, '-p', '#{history_size}'])
+        return int(size_str)
+    except Exception:
+        return 0
+
+def wait_for_prompt_stable(pane, prev_size):
+    start_time = time.time()
     while True:
         time.sleep(2)
-        output = run_tmux(['capture-pane', '-pt', pane])
-        lines = output.splitlines()
+        current_size = get_history_size(pane)
         
-        is_prompt = False
-        if len(lines) >= 1 and lines[-1].strip() == '>':
-            is_prompt = True
-        elif len(lines) >= 2 and lines[-2].strip() == '>':
-            is_prompt = True
-            
-        if is_prompt:
+        # タイムアウト（5分）
+        if time.time() - start_time > 300:
+            print(f"[Warning] Timeout waiting for pane {pane} to become stable.")
             return
+
+        if current_size > prev_size:
+            output = run_tmux(['capture-pane', '-pt', pane])
+            lines = output.splitlines()
+            if not lines:
+                continue
+                
+            is_prompt = False
+            # 最終行かその前の行が '>' 単体であるか
+            if len(lines) >= 1 and lines[-1].strip() == '>':
+                is_prompt = True
+            elif len(lines) >= 2 and lines[-2].strip() == '>':
+                is_prompt = True
+                
+            if is_prompt:
+                # [Yes]: や (Y)es/(N)o などの確認ダイアログが表示されている場合は、自動応答などの処理が終わるのを待つ
+                last_few = "\n".join(lines[-3:])
+                if "[Yes]:" not in last_few and "(Y)es/(N)o" not in last_few:
+                    return
 
 def clean_response(inp_text, out_text):
     out = out_text.strip()
@@ -65,13 +87,23 @@ def clean_response(inp_text, out_text):
     return out.lstrip(":,。、 \n")
 
 def build_prompt(agent_name, is_first=False):
+    # 余計なファイルを作らせないよう、output.txtのみを編集するように強く指示
     if is_first:
-        return f"{INPUT_FILE} の内容（議論のテーマ）を読み、それに対するあなたの意見を {OUTPUT_FILE} に書き込んでください。余計な挨拶や説明は一切不要です。"
+        return (
+            f"重要：{INPUT_FILE} の内容（議論のテーマ）を読み、それに対するあなたの意見を {OUTPUT_FILE} に書き込んでください。\n"
+            f"他のファイル（例：新しいファイルや {INPUT_FILE} 自体）は絶対に作成・編集しないでください。変更は {OUTPUT_FILE} のみに適用してください。余計な挨拶や説明は一切不要です。"
+        )
     else:
         if agent_name == "a":
-            return f"{INPUT_FILE} が更新されました。これに対するあなたの意見や議論を深める視点を {OUTPUT_FILE} に書き込んでください。余計な挨拶や説明、相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。"
+            return (
+                f"重要：{INPUT_FILE} が更新されました。これに対するあなたの意見や議論を深める視点を {OUTPUT_FILE} に書き込んでください。\n"
+                f"他のファイルは絶対に作成・編集しないでください。変更は {OUTPUT_FILE} のみに適用してください。余計な挨拶や説明、相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。"
+            )
         else:
-            return f"{INPUT_FILE} が更新されました。これに対するあなたの反論や同意、新たな視点を {OUTPUT_FILE} に書き込んでください。余計な挨拶や説明、相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。"
+            return (
+                f"重要：{INPUT_FILE} が更新されました。これに対するあなたの反論や同意、新たな視点を {OUTPUT_FILE} に書き込んでください。\n"
+                f"他のファイルは絶対に作成・編集しないでください。変更は {OUTPUT_FILE} のみに適用してください。余計な挨拶や説明、相手の発言のコピーや同じ文章の繰り返しは絶対に避けてください。"
+            )
 
 def print_file_content(label, filepath):
     if not os.path.exists(filepath):
@@ -84,9 +116,9 @@ def print_file_content(label, filepath):
         print(f"(読み込みエラー: {e})")
     print("=" * (len(label) + len(filepath) + 7) + "\n")
 
-def get_clean_response(pane, agent_name):
+def get_clean_response(pane, agent_name, prev_size):
     # 応答完了を待つ
-    wait_for_prompt_simple(pane)
+    wait_for_prompt_stable(pane, prev_size)
     
     # それぞれのディレクトリからファイルを読み込む
     dir_name = "sandbox/LeaderAI" if agent_name == "a" else "sandbox/WorkerAI"
@@ -184,30 +216,31 @@ def main():
     restore_files("b")
     
     # 起動オプションで直接 read-only/edit ファイルを指定し、履歴ファイルも各ディレクトリ内に隔離
+    # --no-show-model-warnings を追加して警告・起動時プロンプトを抑制
     aider_cmd_a = (
-        "aider --model ollama_chat/llama3.2:3b --no-git --no-auto-lint --yes-always "
+        f"aider --model {MODEL} --no-git --no-auto-lint --yes-always --no-show-model-warnings "
         f"--read {INPUT_FILE} --file {OUTPUT_FILE} "
         "--read persona_a.txt --read manifest_a.txt "
         "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history --no-restore-chat-history"
     )
     aider_cmd_b = (
-        "aider --model ollama_chat/llama3.2:3b --no-git --no-auto-lint --yes-always "
+        f"aider --model {MODEL} --no-git --no-auto-lint --yes-always --no-show-model-warnings "
         f"--read {INPUT_FILE} --file {OUTPUT_FILE} "
         "--read persona_b.txt --read manifest_b.txt "
         "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history --no-restore-chat-history"
     )
     
+    size_a_before = get_history_size(pane_a)
     send_keys(pane_a, "cd sandbox/LeaderAI")
     send_keys(pane_a, aider_cmd_a)
     
+    size_b_before = get_history_size(pane_b)
     send_keys(pane_b, "cd sandbox/WorkerAI")
     send_keys(pane_b, aider_cmd_b)
     
     print("Aider起動中（プロンプトの出現を待っています）...")
-    time.sleep(2)
-    # Aiderが起動して最初のプロンプト '>' が表示されるのを確実に待つ
-    wait_for_prompt_simple(pane_a)
-    wait_for_prompt_simple(pane_b)
+    wait_for_prompt_stable(pane_a, size_a_before)
+    wait_for_prompt_stable(pane_b, size_b_before)
     print("Aider起動完了。設定ファイルはすべて読み込み専用（--read）で初期ロードされました。")
     
     # 情報をコンソールに表示
@@ -220,16 +253,14 @@ def main():
     prompt_a = build_prompt("a", is_first=True)
     
     print("Aider A に対話を開始します...")
+    size_a = get_history_size(pane_a)
     send_keys(pane_a, prompt_a)
     
     while True:
-        # 送信直後の誤認識を防ぐために少し待つ
-        time.sleep(3)
-        
         # --------------------------------------------------
         # 1. Aider A の応答完了を待つ -> B へバトンタッチ
         # --------------------------------------------------
-        response = get_clean_response(pane_a, "a")
+        response = get_clean_response(pane_a, "a", size_a)
         
         # ログに記録
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
@@ -244,19 +275,15 @@ def main():
         # Aider B のターンが始まる前に、Aider B 用のペルソナ・マニフェストを強制復元（クリーンアップ）
         restore_files("b")
         
-        time.sleep(2)
-        
         # Bに対して指示
         prompt_b = build_prompt("b")
+        size_b = get_history_size(pane_b)
         send_keys(pane_b, prompt_b)
-        
-        # 送信直後の誤認識を防ぐために少し待つ
-        time.sleep(3)
         
         # --------------------------------------------------
         # 2. Aider B の応答完了を待つ -> A へバトンタッチ
         # --------------------------------------------------
-        response = get_clean_response(pane_b, "b")
+        response = get_clean_response(pane_b, "b", size_b)
         
         # ログに記録
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
@@ -271,10 +298,9 @@ def main():
         # Aider A のターンが始まる前に、Aider A 用のペルソナ・マニフェストを強制復元（クリーンアップ）
         restore_files("a")
         
-        time.sleep(2)
-        
         # Aに対して指示
         prompt_a = build_prompt("a")
+        size_a = get_history_size(pane_a)
         send_keys(pane_a, prompt_a)
 
 if __name__ == '__main__':
