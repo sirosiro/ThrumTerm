@@ -20,41 +20,34 @@ def run_tmux(args):
 def send_keys(pane, keys):
     subprocess.run(['tmux', 'send-keys', '-t', pane, keys, 'Enter'])
 
-def get_history_size(pane):
-    try:
-        size_str = run_tmux(['display-message', '-t', pane, '-p', '#{history_size}'])
-        return int(size_str)
-    except Exception:
-        return 0
-
-def wait_for_prompt_stable(pane, prev_size):
+def wait_for_prompt_stable(pane):
+    # コマンド送信直後に古いプロンプトを誤検知するのを防ぐため、最初に2秒待つ
+    time.sleep(2)
     start_time = time.time()
     while True:
-        time.sleep(2)
-        current_size = get_history_size(pane)
+        time.sleep(1)
         
         # タイムアウト（5分）
         if time.time() - start_time > 300:
             print(f"[Warning] Timeout waiting for pane {pane} to become stable.")
             return
 
-        if current_size > prev_size:
-            output = run_tmux(['capture-pane', '-pt', pane])
-            clean_output = output.rstrip()
-            lines = clean_output.splitlines()
-            if not lines:
-                continue
-                
-            is_prompt = False
-            # 末尾の空行を取り除いた実質的な最終行が '>' であるか判定
-            if len(lines) >= 1 and lines[-1].strip() == '>':
-                is_prompt = True
-                
-            if is_prompt:
-                # [Yes]: や (Y)es/(N)o などの確認ダイアログが表示されている場合は、自動応答などの処理が終わるのを待つ
-                last_few = "\n".join(lines[-3:])
-                if "[Yes]:" not in last_few and "(Y)es/(N)o" not in last_few:
-                    return
+        output = run_tmux(['capture-pane', '-pt', pane])
+        clean_output = output.rstrip()
+        lines = clean_output.splitlines()
+        if not lines:
+            continue
+            
+        is_prompt = False
+        # 末尾の空白を取り除いた実質的な最終行が '>' であるか判定
+        if len(lines) >= 1 and lines[-1].strip() == '>':
+            is_prompt = True
+            
+        if is_prompt:
+            # [Yes]: や (Y)es/(N)o などの確認ダイアログが表示されている場合は、自動応答などの処理が終わるのを待つ
+            last_few = "\n".join(lines[-3:])
+            if "[Yes]:" not in last_few and "(Y)es/(N)o" not in last_few:
+                return
 
 def clean_response(inp_text, out_text):
     out = out_text.strip()
@@ -115,9 +108,9 @@ def print_file_content(label, filepath):
         print(f"(読み込みエラー: {e})")
     print("=" * (len(label) + len(filepath) + 7) + "\n")
 
-def get_clean_response(pane, agent_name, prev_size):
+def get_clean_response(pane, agent_name):
     # 応答完了を待つ
-    wait_for_prompt_stable(pane, prev_size)
+    wait_for_prompt_stable(pane)
     
     # それぞれのディレクトリからファイルを読み込む
     dir_name = "sandbox/LeaderAI" if agent_name == "a" else "sandbox/WorkerAI"
@@ -229,17 +222,15 @@ def main():
         "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history --no-restore-chat-history"
     )
     
-    size_a_before = get_history_size(pane_a)
     send_keys(pane_a, "cd sandbox/LeaderAI")
     send_keys(pane_a, aider_cmd_a)
     
-    size_b_before = get_history_size(pane_b)
     send_keys(pane_b, "cd sandbox/WorkerAI")
     send_keys(pane_b, aider_cmd_b)
     
     print("Aider起動中（プロンプトの出現を待っています）...")
-    wait_for_prompt_stable(pane_a, size_a_before)
-    wait_for_prompt_stable(pane_b, size_b_before)
+    wait_for_prompt_stable(pane_a)
+    wait_for_prompt_stable(pane_b)
     print("Aider起動完了。設定ファイルはすべて読み込み専用（--read）で初期ロードされました。")
     
     # 情報をコンソールに表示
@@ -252,14 +243,13 @@ def main():
     prompt_a = build_prompt("a", is_first=True)
     
     print("Aider A に対話を開始します...")
-    size_a = get_history_size(pane_a)
     send_keys(pane_a, prompt_a)
     
     while True:
         # --------------------------------------------------
         # 1. Aider A の応答完了を待つ -> B へバトンタッチ
         # --------------------------------------------------
-        response = get_clean_response(pane_a, "a", size_a)
+        response = get_clean_response(pane_a, "a")
         
         # ログに記録
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
@@ -276,13 +266,12 @@ def main():
         
         # Bに対して指示
         prompt_b = build_prompt("b")
-        size_b = get_history_size(pane_b)
         send_keys(pane_b, prompt_b)
         
         # --------------------------------------------------
         # 2. Aider B の応答完了を待つ -> A へバトンタッチ
         # --------------------------------------------------
-        response = get_clean_response(pane_b, "b", size_b)
+        response = get_clean_response(pane_b, "b")
         
         # ログに記録
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
@@ -299,7 +288,6 @@ def main():
         
         # Aに対して指示
         prompt_a = build_prompt("a")
-        size_a = get_history_size(pane_a)
         send_keys(pane_a, prompt_a)
 
 if __name__ == '__main__':
