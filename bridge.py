@@ -62,8 +62,10 @@ def clean_response(inp_text, out_text):
         # 出力の先頭から150文字以内で検索キーが見つかるか？
         idx = out.find(inp_suffix)
         if 0 <= idx < 150:
-            # 見つかった位置 + 検索キーの長さより後ろを新しい出力とする
-            out = out[idx + len(inp_suffix):].strip()
+            candidate = out[idx + len(inp_suffix):].strip()
+            # カットした結果、残りが空または極端に短くなる場合は誤検出（文末の重複など）とみなして適用しない
+            if len(candidate) > 10:
+                out = candidate
             
     # よくある前置きフレーズをトリミング
     prefixes = [
