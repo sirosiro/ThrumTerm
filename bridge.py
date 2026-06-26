@@ -40,15 +40,14 @@ def wait_for_prompt_stable(pane, prev_size):
 
         if current_size > prev_size:
             output = run_tmux(['capture-pane', '-pt', pane])
-            lines = output.splitlines()
+            clean_output = output.rstrip()
+            lines = clean_output.splitlines()
             if not lines:
                 continue
                 
             is_prompt = False
-            # 最終行かその前の行が '>' 単体であるか
+            # 末尾の空行を取り除いた実質的な最終行が '>' であるか判定
             if len(lines) >= 1 and lines[-1].strip() == '>':
-                is_prompt = True
-            elif len(lines) >= 2 and lines[-2].strip() == '>':
                 is_prompt = True
                 
             if is_prompt:
