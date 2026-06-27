@@ -7,6 +7,7 @@ import shutil
 
 THEME = sys.argv[1] if len(sys.argv) > 1 else "おにぎりをレンジで温める是非"
 MODEL = sys.argv[2] if len(sys.argv) > 2 else "ollama_chat/llama3.1:8b"
+MAX_RALLIES = int(sys.argv[3]) if len(sys.argv) > 3 else 3
 
 CONVERSATION = "conversation.md"
 INPUT_FILE = "input.txt"
@@ -266,19 +267,21 @@ def main():
     print("Aider A に対話を開始します...")
     send_keys(pane_a, prompt_a)
     
-    while True:
+    for rally in range(1, MAX_RALLIES + 1):
+        print(f"\n--- ラリー {rally} / {MAX_RALLIES} ---")
+        
         # --------------------------------------------------
         # 1. Aider A の応答完了を待つ -> B へバトンタッチ
         # --------------------------------------------------
-        response = get_clean_response(pane_a, "a")
+        response_a = get_clean_response(pane_a, "a")
         
         # ログに記録
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
-            f.write(f"### Aider A\n\n{response}\n\n")
+            f.write(f"### Aider A\n\n{response_a}\n\n")
             
         # 次のターンの準備 (Aの出力をBの入力に書き込み、Aの出力を空にする)
         with open(os.path.join("sandbox/WorkerAI", INPUT_FILE), 'w', encoding='utf-8') as f:
-            f.write(response)
+            f.write(response_a)
         with open(os.path.join("sandbox/LeaderAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
             f.write(PLACEHOLDER)
             
@@ -292,24 +295,63 @@ def main():
         # --------------------------------------------------
         # 2. Aider B の応答完了を待つ -> A へバトンタッチ
         # --------------------------------------------------
-        response = get_clean_response(pane_b, "b")
+        response_b = get_clean_response(pane_b, "b")
         
         # ログに記録
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
-            f.write(f"### Aider B\n\n{response}\n\n")
+            f.write(f"### Aider B\n\n{response_b}\n\n")
             
         # 次のターンの準備 (Bの出力をAの入力に書き込み、Bの出力を空にする)
         with open(os.path.join("sandbox/LeaderAI", INPUT_FILE), 'w', encoding='utf-8') as f:
-            f.write(response)
+            f.write(response_b)
         with open(os.path.join("sandbox/WorkerAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
             f.write(PLACEHOLDER)
             
         # Aider A のターンが始まる前に、Aider A 用のペルソナ・マニフェストを強制復元（クリーンアップ）
         restore_files("a")
         
-        # Aに対して指示
-        prompt_a = build_prompt("a")
-        send_keys(pane_a, prompt_a)
+        # 最終ラリーでなければ、次のラリーのために A に対話指示を送る
+        if rally < MAX_RALLIES:
+            prompt_a = build_prompt("a")
+            send_keys(pane_a, prompt_a)
+
+    # --------------------------------------------------
+    # 最後の要約・結果作成（LeaderAIで実行）
+    # --------------------------------------------------
+    print("\n--- ディスカッション完了。議論の要約と最終結論を作成中... ---")
+    
+    # 1. 会話履歴の読み込み
+    with open(CONVERSATION, 'r', encoding='utf-8') as f:
+        conv_history = f.read()
+        
+    # 2. LeaderAI の input.txt にこれまでの会話履歴を書き込む
+    with open(os.path.join("sandbox/LeaderAI", INPUT_FILE), 'w', encoding='utf-8') as f:
+        f.write(conv_history)
+        
+    # 3. LeaderAI の output.txt をクリア
+    with open(os.path.join("sandbox/LeaderAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
+        f.write(PLACEHOLDER)
+        
+    # 4. 要約指示プロンプトの作成
+    summary_prompt = (
+        f"重要：{INPUT_FILE} にはこれまでのディスカッションのログ（全発言履歴）が記録されています。\n"
+        f"この内容を慎重に読み、これまでの議論の客観的な要約（主な対立点や合意点）および最終的な結論をまとめ、{OUTPUT_FILE} に書き込んでください。\n"
+        f"余計な挨拶や説明は一切不要です。\n"
+        f"【絶対厳守】変更は必ず「{OUTPUT_FILE}」に対してのみ行ってください。他のファイルは絶対に作成・編集しないでください。"
+    )
+    
+    # 5. LeaderAI に要約指示を送信
+    send_keys(pane_a, summary_prompt)
+    
+    # 6. 要約の回収
+    summary_response = get_clean_response(pane_a, "a")
+    
+    # 7. conversation.md に追記
+    with open(CONVERSATION, 'a', encoding='utf-8') as f:
+        f.write(f"## 議論の要約と最終結論\n\n{summary_response}\n\n")
+        
+    print("要約と最終結論が conversation.md に追記されました。")
+    print("ディスカッション環境を終了します。")
 
 if __name__ == '__main__':
     main()
