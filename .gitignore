@@ -10,3 +10,6 @@ screenshot.png
 # macOS system files
 .DS_Store
 **/.DS_Store
+
+# CIP
+DESIGN_PHILOSOPHY.md
