@@ -120,19 +120,21 @@ class AgentConfig:
                 combined_content += f.read()
                 
         # Append the critical instructions specified by the user (locale-aware)
+        # Note: Do not prohibit markdown code blocks (```) in general because Aider requires them
+        # to format its file edit commands (e.g. whole/diff blocks). Prohibit them ONLY within the written file body.
         combined_content += "\n\n"
         if self.is_eng:
             combined_content += (
                 "[CRITICAL CONVENTIONS / RULES]\n"
-                "1. Your SOLE mission is to \"completely overwrite (full replace)\" the contents of 'output.txt' with your own opinion.\n"
-                "2. Do NOT write any greetings, prefaces, program code explanations, or markdown code blocks (```). Write ONLY the plain body text of your opinion directly into the file.\n"
+                "1. Your mission is to \"completely overwrite (full replace)\" the contents of 'output.txt' with your own opinion. Produce the correct Aider editing block (e.g. markdown code blocks) to update 'output.txt'.\n"
+                "2. Within the body text written to 'output.txt', do NOT include any greetings, prefaces, program code explanations, or markdown formatting (```). Write ONLY the plain body text of your opinion.\n"
                 "3. Deeply ponder the opponent's message and your assigned role before developing your next opinion or counterargument."
             )
         else:
             combined_content += (
                 "【絶対厳守のコーディング・出力ルール】\n"
-                "1. あなたの唯一の任務は、output.txt の内容をあなたの意見で「完全に上書き（フルリプレイス）」することです。\n"
-                "2. 挨拶、前置き、プログラムコードの解説、バックティック（```）によるマークダウン装飾は一切禁止します。ファイルに書き込む本文のみを直接出力してください。\n"
+                "1. あなたの任務は、output.txt の内容をあなたの意見で「完全に上書き（フルリプレイス）」することです。Aiderのファイル更新ルールに従い、output.txt を更新するための編集ブロックを出力してください。\n"
+                "2. output.txt のファイル内に書き込む本文には、余計な挨拶、前置き、プログラムコードの解説、バックティック（```）によるマークダウン装飾を含めず、あなたの主張の本文のみを直接記述してください。\n"
                 "3. 対話相手の意見と与えられた役割を深く熟考した上で、次の意見や反論を展開してください。"
             )
                 
@@ -228,8 +230,7 @@ class PromptFactory:
         
         if is_eng:
             instruction_base = (
-                f"When modifying files, edit ONLY '{output_file}' to write your opinion directly, completely in English without any prefaces or quoting the opponent's message.\n"
-                f"Please keep your chat response on this screen brief, such as 'Done'."
+                f"Edit ONLY '{output_file}' to write your opinion directly, completely in English without any prefaces or quoting the opponent's message."
             )
             if is_first:
                 return (
@@ -244,8 +245,7 @@ class PromptFactory:
                 )
         else:
             instruction_base = (
-                f"ファイルを編集する際は、必ず「{output_file}」のみを編集し、余計な挨拶や相手の発言の引用・前置きを含めずに、あなたの意見の本文のみを書き込んでください。\n"
-                f"チャットの応答メッセージ（画面に表示する返答）は、「完了しました」などの簡潔な一言のみを返してください。"
+                f"ファイルを編集する際は、必ず「{output_file}」のみを編集し、余計な挨拶や相手の発言の引用・前置きを含めずに、あなたの意見の本文のみを書き込んでください。"
             )
             if is_first:
                 return (
@@ -269,15 +269,13 @@ class PromptFactory:
                 f"IMPORTANT: Read the discussion logs (full conversation history) carefully.\n"
                 f"Summarize the discussion objectively (main points of disagreement and agreement) and write the final conclusion in '{output_file}' in English.\n"
                 f"No extra greetings or explanations are needed.\n"
-                f"[CRITICAL] Modifying files MUST be done ONLY on '{output_file}'. NEVER create or edit any other files.\n"
-                f"Please keep your chat response on this screen brief, such as 'Done'."
+                f"[CRITICAL] Modifying files MUST be done ONLY on '{output_file}'. NEVER create or edit any other files."
             )
         else:
             return (
                 f"重要：提示されたディスカッションのログ（全発言履歴）を慎重に読み、これまでの議論の客観的な要約（主な対立点や合意点）および最終的な結論をまとめ、{output_file} に日本語で書き込んでください。\n"
                 f"余計な挨拶や説明は一切不要です。\n"
-                f"【絶対厳守】変更は必ず「{output_file}」に対してのみ行ってください。他のファイルは絶対に作成・編集しないでください。\n"
-                f"チャットの応答メッセージ（画面に表示される返答）は、「完了しました」などの簡潔な一言のみを返してください。"
+                f"【絶対厳守】変更は必ず「{output_file}」に対してのみ行ってください。他のファイルは絶対に作成・編集しないでください。"
             )
 
 
