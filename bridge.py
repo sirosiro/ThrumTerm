@@ -146,29 +146,16 @@ class InputOutputController:
         self.out_path = os.path.join(self.dir_name, self.OUTPUT_FILE)
         self.inp_path = os.path.join(self.dir_name, self.INPUT_FILE)
         
-    def write_input(self, topic: str, content: str):
+    def write_raw_input(self, content: str):
+        # Writes raw content directly to input.txt and locks it.
+        # This prevents metadata pollution and lets LLMs focus on raw text logs.
         if os.path.exists(self.inp_path):
             try: os.chmod(self.inp_path, 0o644)
             except OSError: pass
             
-        is_eng = LanguageDetector.is_english(topic)
-        # Apply standard metadata headers (locale-aware)
-        if is_eng:
-            file_content = (
-                f"[Current Discussion Theme]: {topic}\n\n"
-                f"==== Latest opponent message ====\n"
-                f"{content}"
-            )
-        else:
-            file_content = (
-                f"【現在のディスカッションテーマ】: {topic}\n\n"
-                f"==== 相手からの最新の発言 ====\n"
-                f"{content}"
-            )
-        
         with open(self.inp_path, 'w', encoding='utf-8') as f:
-            f.write(file_content)
-        os.chmod(self.inp_path, 0o444)  # Lock input.txt as read-only to prevent LLM modification
+            f.write(content)
+        os.chmod(self.inp_path, 0o444)  # Lock input.txt as read-only
         
     def read_output(self) -> str:
         if not os.path.exists(self.out_path):
@@ -178,14 +165,31 @@ class InputOutputController:
         return self._clean(out_content)
         
     def delete_output(self):
-        # Physically delete the output.txt file instead of just clearing it.
-        # This forces Aider/LLM to write the response cleanly from scratch
-        # and prevents any delta-patch confusion or carrying over old stale text.
+        # Physically delete the output.txt file.
         if os.path.exists(self.out_path):
             try:
                 os.chmod(self.out_path, 0o644)
                 os.remove(self.out_path)
             except OSError: pass
+            
+    def move_to_opponent_input(self, opponent_io):
+        # Moves this agent's output.txt to the opponent's input.txt directly.
+        # This naturally deletes output.txt, prevents patch-merge errors,
+        # and avoids adding metadata headers to prevent prompt contamination.
+        src = self.out_path
+        dst = opponent_io.inp_path
+        
+        # Unlock destination if it exists
+        if os.path.exists(dst):
+            try: os.chmod(dst, 0o644)
+            except OSError: pass
+            
+        if os.path.exists(src):
+            try: os.chmod(src, 0o644)
+            except OSError: pass
+            
+            shutil.move(src, dst)
+            os.chmod(dst, 0o444)  # Lock opponent's input.txt as read-only
             
     def _clean(self, text: str) -> str:
         out = text.strip()
@@ -364,7 +368,8 @@ class DiscussionCoordinator:
             with open(CONVERSATION, 'a', encoding='utf-8') as f:
                 f.write(f"### Aider A\n\n{response_a}\n\n")
                 
-            self.io_b.write_input(self.theme, response_a)
+            # Move LeaderAI's output.txt directly to WorkerAI's input.txt
+            self.io_a.move_to_opponent_input(self.io_b)
             
             # Delete output.txt before prompting Aider B
             self.io_b.delete_output()
@@ -383,7 +388,8 @@ class DiscussionCoordinator:
             with open(CONVERSATION, 'a', encoding='utf-8') as f:
                 f.write(f"### Aider B\n\n{response_b}\n\n")
                 
-            self.io_a.write_input(self.theme, response_b)
+            # Move WorkerAI's output.txt directly to LeaderAI's input.txt
+            self.io_b.move_to_opponent_input(self.io_a)
             
             # Delete output.txt before prompting Aider A again
             self.io_a.delete_output()
@@ -403,7 +409,8 @@ class DiscussionCoordinator:
         with open(CONVERSATION, 'r', encoding='utf-8') as f:
             conv_history = f.read()
             
-        self.io_a.write_input(self.theme, conv_history)
+        # Write full log as raw text to LeaderAI's input.txt for summary task
+        self.io_a.write_raw_input(conv_history)
         
         # Delete output.txt before prompting Aider A for summary compilation
         self.io_a.delete_output()
@@ -474,7 +481,7 @@ class DiscussionCoordinator:
     def _initialize_sandbox(self):
         for dir_name in ["sandbox/LeaderAI", "sandbox/WorkerAI"]:
             os.makedirs(dir_name, exist_ok=True)
-            for cache_file in [".aider.chat.history.md", ".aider.input.history", ".aider.llm.history", "AGENTS.md", "output.txt"]:
+            for cache_file in [".aider.chat.history.md", ".aider.input.history", ".aider.llm.history", "AGENTS.md", "output.txt", "input.txt"]:
                 path = os.path.join(dir_name, cache_file)
                 if os.path.exists(path):
                     try:
@@ -486,12 +493,12 @@ class DiscussionCoordinator:
                 try: shutil.rmtree(cache_dir)
                 except OSError: pass
                 
-        # Initialize default placeholder inputs
+        # Initialize default placeholder inputs using raw write
         initial_msg_a = "Discussion started: Please state your first opinion." if self.is_eng else "（ディスカッション開始：最初の意見を述べてください）"
         initial_msg_b = "Waiting for the opponent to start the discussion..." if self.is_eng else "（対話相手の開始をお待ちください）"
         
-        self.io_a.write_input(self.theme, initial_msg_a)
-        self.io_b.write_input(self.theme, initial_msg_b)
+        self.io_a.write_raw_input(initial_msg_a)
+        self.io_b.write_raw_input(initial_msg_b)
         
     def _print_all_configs(self):
         # Display config summaries in main terminal pane
