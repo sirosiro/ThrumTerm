@@ -122,14 +122,15 @@ class AgentConfig:
         # Append the critical instructions specified by the user (locale-aware)
         # Note: Do not prohibit markdown code blocks (```) in general because Aider requires them
         # to format its file edit commands (e.g. whole/diff blocks). Prohibit them ONLY within the written file body.
-        # Add strict rules prohibiting copying/repeating opponent's claims to prevent auto-reversion loops.
+        # Add strict rules prohibiting copying/repeating opponent's claims or duplicating previous statements.
+        # Enforce paraphrase and grammatical variation to break loop repetitions.
         combined_content += "\n\n"
         if self.is_eng:
             combined_content += (
                 "[CRITICAL CONVENTIONS / RULES]\n"
                 "1. Your mission is to \"completely overwrite (full replace)\" the contents of 'output.txt' with your own opinion. Produce the correct Aider editing block (e.g. markdown code blocks) to update 'output.txt'.\n"
                 "2. Within the body text written to 'output.txt', do NOT include any greetings, prefaces, program code explanations, or markdown formatting (```). Write ONLY the plain body text of your opinion.\n"
-                "3. [STRICT RULE] Never copy, repeat, or quote the opponent's message in your written output. Stating identical points from previous turns is strictly forbidden. Write ONLY your own new logic/examples.\n"
+                "3. [STRICT RULE] Never copy, repeat, or quote the opponent's message in your written output. Stating or repeating identical claims/expressions from previous turns is strictly forbidden. Paraphrase your points completely using different vocabulary and sentence structures.\n"
                 "4. Deeply ponder the opponent's message and your assigned role before developing your next opinion or counterargument."
             )
         else:
@@ -137,7 +138,7 @@ class AgentConfig:
                 "【絶対厳守のコーディング・出力ルール】\n"
                 "1. あなたの任務は、output.txt の内容をあなたの意見で「完全に上書き（フルリプレイス）」することです。Aiderのファイル更新ルールに従い、output.txt を更新するための編集ブロックを出力してください。\n"
                 "2. output.txt のファイル内に書き込む本文には、余計な挨拶、前置き、プログラムコードの解説、バックティック（```）によるマークダウン装飾を含めず、あなたの主張の本文のみを直接記述してください。\n"
-                "3. 【厳重ルール】対話相手の発言や過去に出た主張を、あなたの書く回答ファイル（output.txt）の中にコピー（引用・記述）しないでください。重複した発言やオウム返しは厳禁とし、自分自身の『新しい主張と論点・具体例』のみを記述してください。\n"
+                "3. 【厳重ルール・繰り返し禁止】対話相手の発言をコピー（引用・記述）しないでください。また、前回の自分の発言と「全く同じ文章」「同じ論理展開」「同一の語尾表現」を繰り返すことを厳重に禁止します。主張を再展開する際は、異なる単語や表現に完全にパラフレーズ（言い換え）し、必ず新しい根拠や具体例を追加して議論を前進させてください。\n"
                 "4. 対話相手の意見と与えられた役割を深く熟考した上で、次の意見や反論を展開してください。"
             )
                 
@@ -236,7 +237,7 @@ class PromptFactory:
             instruction_base = (
                 f"When modifying files, edit ONLY '{output_file}' to write your opinion directly, completely in English.\n"
                 f"[CRITICAL] Do NOT copy or quote the opponent's message (contents of '{input_file}') in your response. "
-                f"Do NOT repeat the same points. Write ONLY the plain body of your own new opinion directly into the file."
+                f"Do NOT repeat your previous statements. Paraphrase your expressions and add new evidence to advance the discussion."
             )
             if is_first:
                 return (
@@ -252,8 +253,8 @@ class PromptFactory:
         else:
             instruction_base = (
                 f"ファイルを編集する際は、必ず「{output_file}」のみを編集し、あなたの意見の本文のみを書き込んでください。\n"
-                f"【厳重警告・オウム返し禁止】対話相手の発言（{input_file} の内容）をあなたの回答ファイルの中にコピーしたり、前置きとして引用することは一切禁止します。\n"
-                f"相手の言葉をコピーせず、同じような主張を繰り返さず、あなた自身の具体的な主張や反論の本文のみを直接記述してください。"
+                f"【厳重警告・繰り返し禁止】対話相手の発言（{input_file} の内容）をコピー・引用することは一切禁止します。\n"
+                f"また、自分自身の過去の発言と全く同じ文章表現・語尾の重複を厳禁とし、異なる言い回しに完全にパラフレーズ（言い換え）した上で、必ず新しい論点や具体例を追加して記述してください。"
             )
             if is_first:
                 return (
