@@ -6,3 +6,7 @@ screenshot.png
 # Aider management files
 .aider*
 **/.aider*
+
+# macOS system files
+.DS_Store
+**/.DS_Store
