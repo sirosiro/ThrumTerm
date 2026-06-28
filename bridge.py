@@ -120,20 +120,21 @@ class AgentConfig:
                 combined_content += f.read()
                 
         # Append the critical instructions specified by the user (locale-aware)
-        # Instruct agents to reply directly via chat stdout rather than modifying output.txt files
+        # Note: Do not prohibit markdown code blocks (```) in general because Aider requires them
+        # to format its file edit commands (e.g. whole/diff blocks). Prohibit them ONLY within the written file body.
         combined_content += "\n\n"
         if self.is_eng:
             combined_content += (
                 "[CRITICAL CONVENTIONS / RULES]\n"
-                "1. State your opinion directly in the chat response. Do NOT output markdown code blocks (```) or greetings.\n"
-                "2. Do NOT copy the opponent's message or repeat the same points. Focus on presenting new perspectives or counterarguments.\n"
-                "3. Deeply ponder the opponent's message and your assigned role before developing your next opinion."
+                "1. Your mission is to \"completely overwrite (full replace)\" the contents of 'output.txt' with your own opinion. Produce the correct Aider editing block (e.g. markdown code blocks) to update 'output.txt'.\n"
+                "2. Within the body text written to 'output.txt', do NOT include any greetings, prefaces, program code explanations, or markdown formatting (```). Write ONLY the plain body text of your opinion.\n"
+                "3. Deeply ponder the opponent's message and your assigned role before developing your next opinion or counterargument."
             )
         else:
             combined_content += (
                 "【絶対厳守のコーディング・出力ルール】\n"
-                "1. あなたの意見はチャットの応答として直接述べてください。マークダウンコードブロック（```）による囲みや挨拶は不要です。\n"
-                "2. 対話相手の発言をコピー（オウム返し）したり、同じ主張を繰り返さないでください。常に新しい視点や具体的な反論を追加してください。\n"
+                "1. あなたの任務は、output.txt の内容をあなたの意見で「完全に上書き（フルリプレイス）」することです。Aiderのファイル更新ルールに従い、output.txt を更新するための編集ブロックを出力してください。\n"
+                "2. output.txt のファイル内に書き込む本文には、余計な挨拶、前置き、プログラムコードの解説、バックティック（```）によるマークダウン装飾を含めず、あなたの主張の本文のみを直接記述してください。\n"
                 "3. 対話相手の意見と与えられた役割を深く熟考した上で、次の意見や反論を展開してください。"
             )
                 
@@ -145,48 +146,67 @@ class AgentConfig:
         os.chmod(agents_md_dest, 0o444)
 
 
-class ResponseExtractor:
-    """Extracts the agent's pure text response from the tmux terminal window output buffer."""
-    MSG_START_MARKER = "===MSG_START==="
-
-    @classmethod
-    def extract(cls, pane_id: str) -> str:
-        # Capture the pane buffer including 100 lines scrollback
-        output = TmuxSession.run_command(['capture-pane', '-pt', pane_id, '-S', '-100'])
-        lines = output.splitlines()
+class InputOutputController:
+    """Handles read/write and state-locking for input/output files of agents."""
+    INPUT_FILE = "input.txt"
+    OUTPUT_FILE = "output.txt"
+    
+    def __init__(self, agent_name: str):
+        self.agent_name = agent_name
+        self.dir_name = "sandbox/LeaderAI" if agent_name == "a" else "sandbox/WorkerAI"
+        self.out_path = os.path.join(self.dir_name, self.OUTPUT_FILE)
+        self.inp_path = os.path.join(self.dir_name, self.INPUT_FILE)
         
-        # Locate the last occurrence of the message marker in reverse order
-        start_idx = -1
-        for i in range(len(lines) - 1, -1, -1):
-            if cls.MSG_START_MARKER in lines[i]:
-                start_idx = i
-                break
-                
-        if start_idx == -1:
+    def write_raw_input(self, content: str):
+        # Writes raw content directly to input.txt and locks it.
+        # This prevents metadata pollution and lets LLMs focus on raw text logs.
+        if os.path.exists(self.inp_path):
+            try: os.chmod(self.inp_path, 0o644)
+            except OSError: pass
+            
+        with open(self.inp_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        os.chmod(self.inp_path, 0o444)  # Lock input.txt as read-only
+        
+    def read_output(self) -> str:
+        if not os.path.exists(self.out_path):
             return ""
+        with open(self.out_path, 'r', encoding='utf-8') as f:
+            out_content = f.read()
+        return self._clean(out_content)
+        
+    def create_empty_output(self):
+        # Creates an empty output.txt file to ensure Aider doesn't report file not found
+        # or drop output.txt from the chat session. Size 0 file acts as a clean slate.
+        if os.path.exists(self.out_path):
+            try:
+                os.chmod(self.out_path, 0o644)
+                os.remove(self.out_path)
+            except OSError: pass
             
-        # Collect response lines following the marker until the final wait prompt
-        result_lines = []
-        for i in range(start_idx + 1, len(lines)):
-            line = lines[i].strip()
+        with open(self.out_path, 'w', encoding='utf-8') as f:
+            f.write("")
             
-            # Skip Aider shell prompt lines and system statistics
-            if line == '>':
-                continue
-            if line.startswith('Tokens:') or line.startswith('> Tokens:'):
-                continue
-            if 'Applied edit to' in line or 'Create new file?' in line:
-                continue
-            if line.startswith('>') and i == len(lines) - 1:
-                continue
-                
-            result_lines.append(lines[i])
+    def move_to_opponent_input(self, opponent_io):
+        # Moves this agent's output.txt to the opponent's input.txt directly.
+        # This naturally deletes output.txt, prevents patch-merge errors,
+        # and avoids adding metadata headers to prevent prompt contamination.
+        src = self.out_path
+        dst = opponent_io.inp_path
+        
+        # Unlock destination if it exists
+        if os.path.exists(dst):
+            try: os.chmod(dst, 0o644)
+            except OSError: pass
             
-        raw_response = "\n".join(result_lines).strip()
-        return cls._clean(raw_response)
-
-    @staticmethod
-    def _clean(text: str) -> str:
+        if os.path.exists(src):
+            try: os.chmod(src, 0o644)
+            except OSError: pass
+            
+            shutil.move(src, dst)
+            os.chmod(dst, 0o444)  # Lock opponent's input.txt as read-only
+            
+    def _clean(self, text: str) -> str:
         out = text.strip()
         # Trim standard prefixes that LLMs frequently output
         prefixes = [
@@ -206,45 +226,56 @@ class PromptFactory:
     @staticmethod
     def build_instruction(agent_name: str, theme: str, is_first: bool = False) -> str:
         is_eng = LanguageDetector.is_english(theme)
+        output_file = InputOutputController.OUTPUT_FILE
         
         if is_eng:
+            instruction_base = (
+                f"Edit ONLY '{output_file}' to write your opinion directly, completely in English without any prefaces or quoting the opponent's message."
+            )
             if is_first:
                 return (
-                    f"Topic: \"{theme}\"\n"
-                    f"Please state your first opinion on this topic directly as a chat response. Do not use greetings."
+                    f"IMPORTANT: Read the discussion topic and write your opinion in '{output_file}'.\n"
+                    f"{instruction_base}"
                 )
             else:
-                action = "opinion or perspective to deepen the discussion" if agent_name == "a" else "counterargument, agreement, or new perspective"
+                action = "opinions or perspectives to deepen the discussion" if agent_name == "a" else "counterarguments, agreements, or new perspectives"
                 return (
-                    f"Opponent's opinion presented. Please state your {action} directly as a chat response. Do not repeat the opponent's words."
+                    f"IMPORTANT: The latest message from your opponent has been presented. Write your {action} in '{output_file}'.\n"
+                    f"{instruction_base}"
                 )
         else:
+            instruction_base = (
+                f"ファイルを編集する際は、必ず「{output_file}」のみを編集し、余計な挨拶や相手の発言の引用・前置きを含めずに、あなたの意見の本文のみを書き込んでください。"
+            )
             if is_first:
                 return (
-                    f"議論のテーマは「{theme}」です。\n"
-                    f"これに対するあなたの最初の意見をチャットの応答として直接述べてください。挨拶や余計な前置きは不要です。"
+                    f"重要：提示された議論のテーマを読み、それに対するあなたの意見を {output_file} に書き込んでください。\n"
+                    f"{instruction_base}"
                 )
             else:
                 action = "意見や議論を深める視点" if agent_name == "a" else "反論や同意、新たな視点"
                 return (
-                    f"対話相手からの意見が提示されました。\n"
-                    f"これに対するあなたの{action}をチャットの応答として直接述べてください。相手の言葉をそのまま繰り返さないでください。"
+                    f"重要：対話相手からの最新の意見が提示されました。これに対するあなたの{action}を {output_file} に書き込んでください。\n"
+                    f"{instruction_base}"
                 )
 
     @staticmethod
     def build_summary_instruction(theme: str) -> str:
         is_eng = LanguageDetector.is_english(theme)
+        output_file = InputOutputController.OUTPUT_FILE
         
         if is_eng:
             return (
                 f"IMPORTANT: Read the discussion logs (full conversation history) carefully.\n"
-                f"Summarize the discussion objectively (main points of disagreement and agreement) and write the final conclusion directly as a chat response.\n"
-                f"No extra greetings or explanations are needed."
+                f"Summarize the discussion objectively (main points of disagreement and agreement) and write the final conclusion in '{output_file}' in English.\n"
+                f"No extra greetings or explanations are needed.\n"
+                f"[CRITICAL] Modifying files MUST be done ONLY on '{output_file}'. NEVER create or edit any other files."
             )
         else:
             return (
-                f"重要：提示されたディスカッションのログ（全発言履歴）を慎重に読み、これまでの議論の客観的な要約（主な対立点や合意点）および最終的な結論をまとめ、チャットの応答として直接述べてください。\n"
-                f"余計な挨拶や説明は一切不要です。"
+                f"重要：提示されたディスカッションのログ（全発言履歴）を慎重に読み、これまでの議論の客観的な要約（主な対立点や合意点）および最終的な結論をまとめ、{output_file} に日本語で書き込んでください。\n"
+                f"余計な挨拶や説明は一切不要です。\n"
+                f"【絶対厳守】変更は必ず「{output_file}」に対してのみ行ってください。他のファイルは絶対に作成・編集しないでください。"
             )
 
 
@@ -261,6 +292,8 @@ class DiscussionCoordinator:
         
         self.agent_a_config = AgentConfig("a", theme)
         self.agent_b_config = AgentConfig("b", theme)
+        self.io_a = InputOutputController("a")
+        self.io_b = InputOutputController("b")
         
         self.pane_a = None
         self.pane_b = None
@@ -298,15 +331,17 @@ class DiscussionCoordinator:
         self.agent_a_config.restore()
         self.agent_b_config.restore()
         
-        # Build Aider execution commands (Aider is run as a pure chat client without --file flags)
+        # Build Aider execution commands (explicitly read AGENTS.md using --read flag)
         aider_cmd_a = (
             f"aider --model {self.model} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
+            f"--read {InputOutputController.INPUT_FILE} --file {InputOutputController.OUTPUT_FILE} "
             "--read AGENTS.md "
             "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
             "--llm-history-file .aider.llm.history --no-restore-chat-history"
         )
         aider_cmd_b = (
             f"aider --model {self.model} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
+            f"--read {InputOutputController.INPUT_FILE} --file {InputOutputController.OUTPUT_FILE} "
             "--read AGENTS.md "
             "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
             "--llm-history-file .aider.llm.history --no-restore-chat-history"
@@ -328,41 +363,55 @@ class DiscussionCoordinator:
         
     def run_discussion(self):
         """Runs the main discussion loop between Agent A (Leader) and Agent B (Worker)."""
+        # Ensure output.txt exists as size 0 cleanly to avoid Aider drop file error
+        self.io_a.create_empty_output()
         prompt_a = PromptFactory.build_instruction("a", self.theme, is_first=True)
         print("Aider A に対話を開始します...")
-        self._send_prompt_with_marker(self.pane_a, prompt_a)
+        TmuxSession.send_keys(self.pane_a, prompt_a)
         
         for rally in range(1, self.max_rallies + 1):
             print(f"\n--- ラリー {rally} / {self.max_rallies} ---")
             
-            # 1. Wait for LeaderAI (A) and extract response from screen buffer
+            # 1. Wait for LeaderAI (A) and fetch response
             TmuxSession.wait_for_prompt_stable(self.pane_a)
-            response_a = ResponseExtractor.extract(self.pane_a)
+            response_a = self.io_a.read_output()
             
             with open(CONVERSATION, 'a', encoding='utf-8') as f:
                 f.write(f"### Aider A\n\n{response_a}\n\n")
                 
+            # Move LeaderAI's output.txt directly to WorkerAI's input.txt
+            self.io_a.move_to_opponent_input(self.io_b)
+            
+            # Re-create empty output.txt for B before prompting
+            self.io_b.create_empty_output()
+            
             # Refresh config files for B
             self.agent_b_config.restore()
             
-            # Prompt B with A's response directly
-            prompt_b = f"対話相手（Aider A）の発言は以下の通りです：\n「{response_a}」\n\n" + PromptFactory.build_instruction("b", self.theme)
-            self._send_prompt_with_marker(self.pane_b, prompt_b)
+            # Prompt B
+            prompt_b = PromptFactory.build_instruction("b", self.theme)
+            TmuxSession.send_keys(self.pane_b, prompt_b)
             
-            # 2. Wait for WorkerAI (B) and extract response from screen buffer
+            # 2. Wait for WorkerAI (B) and fetch response
             TmuxSession.wait_for_prompt_stable(self.pane_b)
-            response_b = ResponseExtractor.extract(self.pane_b)
+            response_b = self.io_b.read_output()
             
             with open(CONVERSATION, 'a', encoding='utf-8') as f:
                 f.write(f"### Aider B\n\n{response_b}\n\n")
                 
+            # Move WorkerAI's output.txt directly to LeaderAI's input.txt
+            self.io_b.move_to_opponent_input(self.io_a)
+            
+            # Re-create empty output.txt for A before prompting again
+            self.io_a.create_empty_output()
+            
             # Refresh config files for A
             self.agent_a_config.restore()
             
             # Loop next rally if not the end
             if rally < self.max_rallies:
-                prompt_a = f"対話相手（Aider B）の発言は以下の通りです：\n「{response_b}」\n\n" + PromptFactory.build_instruction("a", self.theme)
-                self._send_prompt_with_marker(self.pane_a, prompt_a)
+                prompt_a = PromptFactory.build_instruction("a", self.theme)
+                TmuxSession.send_keys(self.pane_a, prompt_a)
                 
     def generate_summary(self):
         """Instructs Agent A to read the discussion log and compile a final summary."""
@@ -371,11 +420,17 @@ class DiscussionCoordinator:
         with open(CONVERSATION, 'r', encoding='utf-8') as f:
             conv_history = f.read()
             
-        summary_prompt = f"これまでの会話ログ（全発言履歴）は以下の通りです：\n\n\"\"\"\n{conv_history}\n\"\"\"\n\n" + PromptFactory.build_summary_instruction(self.theme)
-        self._send_prompt_with_marker(self.pane_a, summary_prompt)
+        # Write full log as raw text to LeaderAI's input.txt for summary task
+        self.io_a.write_raw_input(conv_history)
+        
+        # Re-create empty output.txt for A before summary compilation
+        self.io_a.create_empty_output()
+        
+        summary_prompt = PromptFactory.build_summary_instruction(self.theme)
+        TmuxSession.send_keys(self.pane_a, summary_prompt)
         
         TmuxSession.wait_for_prompt_stable(self.pane_a)
-        summary_response = ResponseExtractor.extract(self.pane_a)
+        summary_response = self.io_a.read_output()
         
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
             if self.is_eng:
@@ -383,7 +438,7 @@ class DiscussionCoordinator:
             else:
                 f.write(f"## 議論の要約と最終結論\n\n{summary_response}\n\n")
                 
-        print("要約と最終結論が discussion_log.md に追記されました。")
+        print("要約と最終結論が conversation.md に追記されました。")
         
     def shutdown(self):
         """Sends exit command to stop Aider client processes clean."""
@@ -392,11 +447,6 @@ class DiscussionCoordinator:
         TmuxSession.send_keys(self.pane_b, "/exit")
         print("ディスカッション環境を終了します。")
         
-    def _send_prompt_with_marker(self, pane_id: str, prompt_text: str):
-        # Embed message start marker to cleanly capture prompt boundaries
-        full_keys = f"{ResponseExtractor.MSG_START_MARKER}\n{prompt_text}"
-        TmuxSession.send_keys(pane_id, full_keys)
-
     def _prepare_configs(self):
         os.makedirs("agent_configs", exist_ok=True)
         # Migrate old root-level configs if present
@@ -453,6 +503,13 @@ class DiscussionCoordinator:
             if os.path.exists(cache_dir):
                 try: shutil.rmtree(cache_dir)
                 except OSError: pass
+                
+        # Initialize default placeholder inputs using raw write
+        initial_msg_a = "Discussion started: Please state your first opinion." if self.is_eng else "（ディスカッション開始：最初の意見を述べてください）"
+        initial_msg_b = "Waiting for the opponent to start the discussion..." if self.is_eng else "（対話相手の開始をお待ちください）"
+        
+        self.io_a.write_raw_input(initial_msg_a)
+        self.io_b.write_raw_input(initial_msg_b)
         
     def _print_all_configs(self):
         # Display config summaries in main terminal pane
