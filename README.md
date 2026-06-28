@@ -4,7 +4,7 @@
  
 `ThrumTerm`（スラム・ターム）は、`tmux`、`Aider`、そして`Ollama`を高度に融合させ、ローカル環境完結型で動作する自律型AIマルチエージェント・ディスカッション（合議・開発）環境です。
  
-アンディ・ウィアーのSF小説『プロジェクト・ヘイル・メアリー』に登場する、エリド人の超有機的集合知システム「スラム（thrum: 鳴動）」にインスパイアされています。各エージェントはtmuxの独立したペイン（Pane）という個のニューロンでありながら、相互のコンテキストを多重化（Multiplexing）して議論を交わすことで、個体のLLMを超えた「即席の集団精神（Ad-hoc Group Mind）」をターミナル上に構築します。
+アンディ・ウィアーのSF小説『プロジェクト・ヘイル・メアリー』に登場する、エリド人の超有機的集合知システム「スラム（thrum: 鳴動）」にインスパイアされています。各エージェントはtmuxの独立したペイン（Pane）という個のニューロンでありながら、相互의コンテキストを多重化（Multiplexing）して議論を交わすことで、個体のLLMを超えた「即席の集団精神（Ad-hoc Group Mind）」をターミナル上に構築します。
  
 ---
  
@@ -158,9 +158,24 @@ $ ./bridge.py "日本の経済が停滞している原因を考察" gemini/gemin
  
 ## ディレクトリ構成
  
-- `bridge.py`: ディスカッションの進行、tmuxの制御、AIの応答回収を行うメインの Python スクリプト。
-- `agent_configs/`: 各AIの設定（ペルソナ、役割マニフェスト）を格納するディレクトリ。
--   `persona_a.txt` / `manifest_a.txt`（技術イノベーター用設定）
--   `persona_b.txt` / `manifest_b.txt`（現実主義システムアナリスト用設定）
-- `sandbox/`: 各AIの隔離実行環境（`LeaderAI/` および `WorkerAI/`）が作成されるディレクトリ（Git管理除外）。
-- `conversation.md`: 記録されたディスカッションログ（Git管理除外）。
+```text
+ThrumTerm/
+├── bridge.py                 # オーケストレーション制御スクリプト
+├── agent_configs/            # 各AIエージェントのキャラクター・役割定義
+│   ├── persona_a.txt         # LeaderAI用ペルソナ（日本語版）
+│   ├── manifest_a.txt        # LeaderAI用マニフェスト（日本語版）
+│   ├── persona_a_en.txt      # LeaderAI用ペルソナ（英語版）
+│   ├── manifest_a_en.txt     # LeaderAI用マニフェスト（英語版）
+│   ├── persona_b.txt         # WorkerAI用ペルソナ（日本語版）
+│   ├── manifest_b.txt        # WorkerAI用マニフェスト（日本語版）
+│   ├── persona_b_en.txt      # WorkerAI用ペルソナ（英語版）
+│   └── manifest_b_en.txt     # WorkerAI用マニフェスト（英語版）
+├── docs/                     # ドキュメント資産
+│   └── assets/               # スクリーンショット画像等のアセット
+│       ├── screenshot_jp.png # 日本語実行時の画面イメージ
+│       └── screenshot_en.png # 英語実行時の画面イメージ
+├── sandbox/                  # Aiderが作業を行う隔離された一時環境（Git管理除外）
+│   ├── LeaderAI/
+│   └── WorkerAI/
+└── conversation.md           # ディスカッションの成果物ログ（Git管理除外）
+```
