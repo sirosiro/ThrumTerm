@@ -156,13 +156,21 @@ class InputOutputController:
         os.chmod(self.inp_path, 0o444)  # Lock input.txt as read-only to prevent LLM modification
         
     def read_output(self) -> str:
+        if not os.path.exists(self.out_path):
+            return ""
         with open(self.out_path, 'r', encoding='utf-8') as f:
             out_content = f.read()
         return self._clean(out_content)
         
-    def clear_output(self):
-        with open(self.out_path, 'w', encoding='utf-8') as f:
-            f.write("")
+    def delete_output(self):
+        # Physically delete the output.txt file instead of just clearing it.
+        # This forces Aider/LLM to write the response cleanly from scratch
+        # and prevents any delta-patch confusion or carrying over old stale text.
+        if os.path.exists(self.out_path):
+            try:
+                os.chmod(self.out_path, 0o644)
+                os.remove(self.out_path)
+            except OSError: pass
             
     def _clean(self, text: str) -> str:
         out = text.strip()
@@ -325,6 +333,8 @@ class DiscussionCoordinator:
         
     def run_discussion(self):
         """Runs the main discussion loop between Agent A (Leader) and Agent B (Worker)."""
+        # Delete output.txt before prompting Aider A for the first time
+        self.io_a.delete_output()
         prompt_a = PromptFactory.build_instruction("a", self.theme, is_first=True)
         print("Aider A に対話を開始します...")
         TmuxSession.send_keys(self.pane_a, prompt_a)
@@ -340,7 +350,9 @@ class DiscussionCoordinator:
                 f.write(f"### Aider A\n\n{response_a}\n\n")
                 
             self.io_b.write_input(self.theme, response_a)
-            self.io_a.clear_output()
+            
+            # Delete output.txt before prompting Aider B
+            self.io_b.delete_output()
             
             # Refresh config files for B
             self.agent_b_config.restore()
@@ -357,7 +369,9 @@ class DiscussionCoordinator:
                 f.write(f"### Aider B\n\n{response_b}\n\n")
                 
             self.io_a.write_input(self.theme, response_b)
-            self.io_b.clear_output()
+            
+            # Delete output.txt before prompting Aider A again
+            self.io_a.delete_output()
             
             # Refresh config files for A
             self.agent_a_config.restore()
@@ -375,7 +389,9 @@ class DiscussionCoordinator:
             conv_history = f.read()
             
         self.io_a.write_input(self.theme, conv_history)
-        self.io_a.clear_output()
+        
+        # Delete output.txt before prompting Aider A for summary compilation
+        self.io_a.delete_output()
         
         summary_prompt = PromptFactory.build_summary_instruction(self.theme)
         TmuxSession.send_keys(self.pane_a, summary_prompt)
@@ -443,7 +459,7 @@ class DiscussionCoordinator:
     def _initialize_sandbox(self):
         for dir_name in ["sandbox/LeaderAI", "sandbox/WorkerAI"]:
             os.makedirs(dir_name, exist_ok=True)
-            for cache_file in [".aider.chat.history.md", ".aider.input.history", ".aider.llm.history", "AGENTS.md"]:
+            for cache_file in [".aider.chat.history.md", ".aider.input.history", ".aider.llm.history", "AGENTS.md", "output.txt"]:
                 path = os.path.join(dir_name, cache_file)
                 if os.path.exists(path):
                     try:
