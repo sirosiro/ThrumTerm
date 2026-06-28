@@ -293,16 +293,18 @@ class DiscussionCoordinator:
         self.agent_a_config.restore()
         self.agent_b_config.restore()
         
-        # Build Aider execution commands (AGENTS.md is automatically read from the directory)
+        # Build Aider execution commands (explicitly read AGENTS.md using --read flag)
         aider_cmd_a = (
             f"aider --model {self.model} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
             f"--read {InputOutputController.INPUT_FILE} --file {InputOutputController.OUTPUT_FILE} "
+            "--read AGENTS.md "
             "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
             "--llm-history-file .aider.llm.history --no-restore-chat-history"
         )
         aider_cmd_b = (
             f"aider --model {self.model} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
             f"--read {InputOutputController.INPUT_FILE} --file {InputOutputController.OUTPUT_FILE} "
+            "--read AGENTS.md "
             "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
             "--llm-history-file .aider.llm.history --no-restore-chat-history"
         )
