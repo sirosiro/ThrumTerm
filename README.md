@@ -3,6 +3,7 @@
 > **Ad-hoc Autonomous Agent Discussion Environment via tmux, Aider, and Ollama**
  
 `ThrumTerm`（スラム・ターム）は、`tmux`、`Aider`、そして`Ollama`を高度に融合させ、ローカル環境完結型で動作する自律型AIマルチエージェント・ディスカッション（合議・開発）環境です。
+本プロジェクトは、自律AI合議システム [CIP-Bridge](https://github.com/sirosiro/cip/blob/main/CIP-Bridge/ARCHITECTURE_MANIFEST.md) からのスピンオフとして開発されました。
  
 <!-- アンディ・ウィアーのSF小説『プロジェクト・ヘイル・メアリー』に登場する、エリド人の超有機的集合知システム「スラム（thrum: 鳴動）」にインスパイアされています。各エージェントはtmuxの独立したペイン（Pane）という個のニューロンでありながら、相互のコンテキストを多重化（Multiplexing）して議論を交わすことで、個体のLLMを超えた「即席の集団精神（Ad-hoc Group Mind）」をターミナル上に構築します。-->
  
