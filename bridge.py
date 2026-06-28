@@ -78,7 +78,7 @@ class TmuxSession:
 
 
 class AgentConfig:
-    """Manages persona and manifesto configurations for an agent."""
+    """Manages AGENTS.md configuration for an agent by combining persona and manifesto."""
     def __init__(self, agent_name: str, theme: str):
         self.agent_name = agent_name
         self.theme = theme
@@ -92,21 +92,32 @@ class AgentConfig:
         persona_master = os.path.join("agent_configs", f"persona_{self.agent_name}{suffix}.txt")
         manifest_master = os.path.join("agent_configs", f"manifest_{self.agent_name}{suffix}.txt")
         
-        persona_dest = os.path.join(self.dir_name, f"persona_{self.agent_name}.txt")
-        manifest_dest = os.path.join(self.dir_name, f"manifest_{self.agent_name}.txt")
+        agents_md_dest = os.path.join(self.dir_name, "AGENTS.md")
         
-        self._copy_and_lock(persona_master, persona_dest)
-        self._copy_and_lock(manifest_master, manifest_dest)
-        
-    def _copy_and_lock(self, src: str, dest: str):
-        if os.path.exists(src):
-            if os.path.exists(dest):
-                try:
-                    os.chmod(dest, 0o644)
-                    os.remove(dest)
-                except OSError: pass
-            shutil.copy(src, dest)
-            os.chmod(dest, 0o444)  # Lock destination as read-only (chmod 444)
+        # Unlock and delete existing AGENTS.md if it exists
+        if os.path.exists(agents_md_dest):
+            try:
+                os.chmod(agents_md_dest, 0o644)
+                os.remove(agents_md_dest)
+            except OSError: pass
+            
+        # Read and merge persona and manifesto into AGENTS.md
+        combined_content = ""
+        if os.path.exists(persona_master):
+            with open(persona_master, 'r', encoding='utf-8') as f:
+                combined_content += f.read()
+                
+        if os.path.exists(manifest_master):
+            combined_content += "\n\n"
+            with open(manifest_master, 'r', encoding='utf-8') as f:
+                combined_content += f.read()
+                
+        # Write merged file to destination
+        with open(agents_md_dest, 'w', encoding='utf-8') as f:
+            f.write(combined_content)
+            
+        # Lock destination as read-only (chmod 444) to prevent LLM modification
+        os.chmod(agents_md_dest, 0o444)
 
 
 class InputOutputController:
@@ -278,22 +289,20 @@ class DiscussionCoordinator:
         # Start trailing conversation logs in tail pane
         TmuxSession.send_keys(self.pane_tail, f"tail -f {CONVERSATION}")
         
-        # Restore agent config personas/manifestos in work sandboxes
+        # Restore agent config personas/manifestos in work sandboxes as AGENTS.md
         self.agent_a_config.restore()
         self.agent_b_config.restore()
         
-        # Build Aider execution commands
+        # Build Aider execution commands (AGENTS.md is automatically read from the directory)
         aider_cmd_a = (
             f"aider --model {self.model} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
             f"--read {InputOutputController.INPUT_FILE} --file {InputOutputController.OUTPUT_FILE} "
-            "--read persona_a.txt --read manifest_a.txt "
             "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
             "--llm-history-file .aider.llm.history --no-restore-chat-history"
         )
         aider_cmd_b = (
             f"aider --model {self.model} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
             f"--read {InputOutputController.INPUT_FILE} --file {InputOutputController.OUTPUT_FILE} "
-            "--read persona_b.txt --read manifest_b.txt "
             "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
             "--llm-history-file .aider.llm.history --no-restore-chat-history"
         )
@@ -432,10 +441,12 @@ class DiscussionCoordinator:
     def _initialize_sandbox(self):
         for dir_name in ["sandbox/LeaderAI", "sandbox/WorkerAI"]:
             os.makedirs(dir_name, exist_ok=True)
-            for cache_file in [".aider.chat.history.md", ".aider.input.history", ".aider.llm.history"]:
+            for cache_file in [".aider.chat.history.md", ".aider.input.history", ".aider.llm.history", "AGENTS.md"]:
                 path = os.path.join(dir_name, cache_file)
                 if os.path.exists(path):
-                    try: os.remove(path)
+                    try:
+                        os.chmod(path, 0o644)
+                        os.remove(path)
                     except OSError: pass
             cache_dir = os.path.join(dir_name, ".aider.tags.cache.v4")
             if os.path.exists(cache_dir):
@@ -451,10 +462,8 @@ class DiscussionCoordinator:
         
     def _print_all_configs(self):
         # Display config summaries in main terminal pane
-        print_file_content("Aider A Persona", "sandbox/LeaderAI/persona_a.txt")
-        print_file_content("Aider A Manifest", "sandbox/LeaderAI/manifest_a.txt")
-        print_file_content("Aider B Persona", "sandbox/WorkerAI/persona_b.txt")
-        print_file_content("Aider B Manifest", "sandbox/WorkerAI/manifest_b.txt")
+        print_file_content("Aider A AGENTS.md", "sandbox/LeaderAI/AGENTS.md")
+        print_file_content("Aider B AGENTS.md", "sandbox/WorkerAI/AGENTS.md")
 
 
 def print_file_content(label, filepath):
