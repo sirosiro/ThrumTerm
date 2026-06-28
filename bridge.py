@@ -103,6 +103,13 @@ class AgentConfig:
             
         # Read and merge persona and manifesto into AGENTS.md
         combined_content = ""
+        
+        # Embed the discussion topic as the main header of AGENTS.md so the LLM always remembers it
+        if self.is_eng:
+            combined_content += f"# Discussion Theme: \"{self.theme}\"\n\n"
+        else:
+            combined_content += f"# ディスカッションテーマ: 「{self.theme}」\n\n"
+            
         if os.path.exists(persona_master):
             with open(persona_master, 'r', encoding='utf-8') as f:
                 combined_content += f.read()
@@ -164,13 +171,17 @@ class InputOutputController:
             out_content = f.read()
         return self._clean(out_content)
         
-    def delete_output(self):
-        # Physically delete the output.txt file.
+    def create_empty_output(self):
+        # Creates an empty output.txt file to ensure Aider doesn't report file not found
+        # or drop output.txt from the chat session. Size 0 file acts as a clean slate.
         if os.path.exists(self.out_path):
             try:
                 os.chmod(self.out_path, 0o644)
                 os.remove(self.out_path)
             except OSError: pass
+            
+        with open(self.out_path, 'w', encoding='utf-8') as f:
+            f.write("")
             
     def move_to_opponent_input(self, opponent_io):
         # Moves this agent's output.txt to the opponent's input.txt directly.
@@ -352,8 +363,8 @@ class DiscussionCoordinator:
         
     def run_discussion(self):
         """Runs the main discussion loop between Agent A (Leader) and Agent B (Worker)."""
-        # Delete output.txt before prompting Aider A for the first time
-        self.io_a.delete_output()
+        # Ensure output.txt exists as size 0 cleanly to avoid Aider drop file error
+        self.io_a.create_empty_output()
         prompt_a = PromptFactory.build_instruction("a", self.theme, is_first=True)
         print("Aider A に対話を開始します...")
         TmuxSession.send_keys(self.pane_a, prompt_a)
@@ -371,8 +382,8 @@ class DiscussionCoordinator:
             # Move LeaderAI's output.txt directly to WorkerAI's input.txt
             self.io_a.move_to_opponent_input(self.io_b)
             
-            # Delete output.txt before prompting Aider B
-            self.io_b.delete_output()
+            # Re-create empty output.txt for B before prompting
+            self.io_b.create_empty_output()
             
             # Refresh config files for B
             self.agent_b_config.restore()
@@ -391,8 +402,8 @@ class DiscussionCoordinator:
             # Move WorkerAI's output.txt directly to LeaderAI's input.txt
             self.io_b.move_to_opponent_input(self.io_a)
             
-            # Delete output.txt before prompting Aider A again
-            self.io_a.delete_output()
+            # Re-create empty output.txt for A before prompting again
+            self.io_a.create_empty_output()
             
             # Refresh config files for A
             self.agent_a_config.restore()
@@ -412,8 +423,8 @@ class DiscussionCoordinator:
         # Write full log as raw text to LeaderAI's input.txt for summary task
         self.io_a.write_raw_input(conv_history)
         
-        # Delete output.txt before prompting Aider A for summary compilation
-        self.io_a.delete_output()
+        # Re-create empty output.txt for A before summary compilation
+        self.io_a.create_empty_output()
         
         summary_prompt = PromptFactory.build_summary_instruction(self.theme)
         TmuxSession.send_keys(self.pane_a, summary_prompt)
