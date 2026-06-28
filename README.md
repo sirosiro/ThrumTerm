@@ -114,7 +114,7 @@ $ ./bridge.py "日本の経済が停滞している原因を考察" ollama_chat/
  
 実行すると、自動的に `tmux` の新規ウィンドウが分割され、各エージェント（技術イノベーターとシステムアナリスト）が自律的かつ交互にディスカッションを開始します。
  
-指定したラリー数の対話がすべて終了すると、最後に **LeaderAI がこれまでの議論ログをすべて読み込み、客観的な要約と最終結論を作成して `conversation.md` の末尾に自動追記** させた後にプログラムを正常終了します。
+指定したラリー数の対話がすべて終了すると、最後に **LeaderAI がこれまでの議論ログをすべて読み込み、客観的な要約と最終結論を作成して `discussion_log.md` の末尾に自動追記** させた後にプログラムを正常終了します。
  
 #### (オプション) 商用外部API (OpenAI, Anthropic, Gemini 等) を利用する場合
  
@@ -153,7 +153,7 @@ $ ./bridge.py "日本の経済が停滞している原因を考察" gemini/gemin
  
 ### 3. 結果の確認
  
-議論の軌跡は、リアルタイムにリポジトリ直下の `conversation.md` に追記されていきます。
+議論の軌跡は、リアルタイムにリポジトリ直下の `discussion_log.md` に追記されていきます。
  
 また、デバッグや動作確認用に、LLMとの生対話ログが `sandbox/LeaderAI/.aider.llm.history` および `sandbox/WorkerAI/.aider.llm.history` に自動的に書き出されます。
  
@@ -180,5 +180,5 @@ ThrumTerm/
 ├── sandbox/                  # Aiderが作業を行う隔離された一時環境（Git管理除外）
 │   ├── LeaderAI/
 │   └── WorkerAI/
-└── conversation.md           # ディスカッションの成果物ログ（Git管理除外）
+└── discussion_log.md         # ディスカッションの成果物ログ（Git管理除外）
 ```
