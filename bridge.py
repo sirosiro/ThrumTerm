@@ -112,6 +112,21 @@ class AgentConfig:
             with open(manifest_master, 'r', encoding='utf-8') as f:
                 combined_content += f.read()
                 
+        # Append the critical instructions specified by the user (locale-aware)
+        combined_content += "\n\n"
+        if self.is_eng:
+            combined_content += (
+                "[CRITICAL CONVENTIONS / RULES]\n"
+                "1. Your SOLE mission is to \"completely overwrite (full replace)\" the contents of 'output.txt' with your own opinion.\n"
+                "2. Do NOT write any greetings, prefaces, program code explanations, or markdown code blocks (```). Write ONLY the plain body text of your opinion directly into the file."
+            )
+        else:
+            combined_content += (
+                "【絶対厳守のコーディング・出力ルール】\n"
+                "1. あなたの唯一の任務は、output.txt の内容をあなたの意見で「完全に上書き（フルリプレイス）」することです。\n"
+                "2. 挨拶、前置き、プログラムコードの解説、バックティック（```）によるマークダウン装飾は一切禁止します。ファイルに書き込む本文のみを直接出力してください。"
+            )
+                
         # Write merged file to destination
         with open(agents_md_dest, 'w', encoding='utf-8') as f:
             f.write(combined_content)
