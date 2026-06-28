@@ -2,4 +2,7 @@ sandbox/
 conversation.md
 screenshot.png
 .#error.log
+
+# Aider management files
 .aider*
+**/.aider*
