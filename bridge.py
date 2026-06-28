@@ -446,7 +446,7 @@ class DiscussionCoordinator:
             else:
                 f.write(f"## 議論の要約と最終結論\n\n{summary_response}\n\n")
                 
-        print("要約と最終結論が conversation.md に追記されました。")
+        print(f"要約と最終結論が {CONVERSATION} に追記されました。")
         
     def shutdown(self):
         """Sends exit command to stop Aider client processes clean."""
