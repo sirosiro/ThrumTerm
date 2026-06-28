@@ -14,6 +14,7 @@ if "/" not in MODEL:
     MODEL = f"ollama_chat/{MODEL}"
 
 CONVERSATION = "conversation.md"
+INPUT_FILE = "input.txt"
 OUTPUT_FILE = "output.txt"
 PLACEHOLDER = ""
 
@@ -34,6 +35,37 @@ def send_keys(pane, keys):
     # これにより、tmux経由で複数行を送信する際の意図しない早期実行や入力の分断を防ぎます。
     single_line_keys = keys.replace('\n', ' ')
     subprocess.run(['tmux', 'send-keys', '-t', pane, single_line_keys, 'Enter'])
+
+def write_input_file(dir_name, topic, content):
+    # input.txt を作成または上書きし、OSのファイル権限で「読み取り専用（0o444）」にロックする。
+    # これにより Aider (LLM) による input.txt の改ざん・書き換えを防ぎ、トピックの汚染を防止します。
+    inp_path = os.path.join(dir_name, INPUT_FILE)
+    
+    # 既存の読み取り専用属性を一時的に解除
+    if os.path.exists(inp_path):
+        try: os.chmod(inp_path, 0o644)
+        except OSError: pass
+        
+    is_eng = is_english_text(topic)
+    # テーマをヘッダーに固定してコンタミを防止（多言語切り替え対応）
+    if is_eng:
+        file_content = (
+            f"[Current Discussion Theme]: {topic}\n\n"
+            f"==== Latest opponent message ====\n"
+            f"{content}"
+        )
+    else:
+        file_content = (
+            f"【現在のディスカッションテーマ】: {topic}\n\n"
+            f"==== 相手からの最新の発言 ====\n"
+            f"{content}"
+        )
+    
+    with open(inp_path, 'w', encoding='utf-8') as f:
+        f.write(file_content)
+        
+    # 読み取り専用に再ロック
+    os.chmod(inp_path, 0o444)
 
 def wait_for_prompt_stable(pane):
     # コマンド送信直後に古いプロンプトを誤検知するのを防ぐため、最初に2秒待つ
@@ -80,47 +112,53 @@ def clean_response(out_text):
             
     return out.lstrip(":,。、 \n")
 
-def build_prompt(agent_name, opponent_speech, is_first=False):
-    # 相手の発言（インプット）をファイル(input.txt)ではなく、チャットのプロンプト内に直接埋め込む。
-    # これによりコンテキスト内の読み込み専用ファイル数が最小化され、LLMによるコピペや編集誤認バグを構造的に根絶します。
-    is_eng = is_english_text(THEME)
-    
-    if is_eng:
+def build_prompt(agent_name, is_first=False):
+    if is_english_text(THEME):
+        # 英語版プロンプト：英語での議論・記述を強制し、チャット応答の複製を抑止
+        # LLMの日本語での自動回答を防ぐため、「completely in English」の記述指示を明確に追加
         instruction_base = (
             f"When modifying files, edit ONLY '{OUTPUT_FILE}' to write your opinion directly, completely in English without any prefaces or quoting the opponent's message.\n"
             f"Please keep your chat response on this screen brief, such as 'Done'."
         )
         if is_first:
             return (
-                f"The discussion topic is: \"{THEME}\"\n"
-                f"Read this topic and write your opinion in '{OUTPUT_FILE}'.\n"
+                f"IMPORTANT: Read the discussion topic and write your opinion in '{OUTPUT_FILE}'.\n"
                 f"{instruction_base}"
             )
         else:
-            return (
-                f"The latest message from your opponent is:\n"
-                f"\"{opponent_speech}\"\n\n"
-                f"Write your opinions, perspectives, or counterarguments to deepen the discussion in '{OUTPUT_FILE}'.\n"
-                f"{instruction_base}"
-            )
+            if agent_name == "a":
+                return (
+                    f"IMPORTANT: The latest message from your opponent has been presented. Write your opinions or perspectives to deepen the discussion in '{OUTPUT_FILE}'.\n"
+                    f"{instruction_base}"
+                )
+            else:
+                return (
+                    f"IMPORTANT: The latest message from your opponent has been presented. Write your counterarguments, agreements, or new perspectives in '{OUTPUT_FILE}'.\n"
+                    f"{instruction_base}"
+                )
     else:
+        # 日本語版プロンプト：日本語での議論・記述を強制し、チャット応答の複製を抑止
+        # LLMの確率分布を安定させ思考ループを防ぐため、複雑な否定命令をシンプルな肯定表現に整理
         instruction_base = (
             f"ファイルを編集する際は、必ず「{OUTPUT_FILE}」のみを編集し、余計な挨拶や相手の発言の引用・前置きを含めずに、あなたの意見の本文のみを書き込んでください。\n"
             f"チャットの応答メッセージ（画面に表示する返答）は、「完了しました」などの簡潔な一言のみを返してください。"
         )
         if is_first:
             return (
-                f"今回の議論のテーマは「{THEME}」です。\n"
-                f"このテーマに対するあなたの意見を「{OUTPUT_FILE}」に書き込んでください。\n"
+                f"重要：提示された議論のテーマを読み、それに対するあなたの意見を {OUTPUT_FILE} に書き込んでください。\n"
                 f"{instruction_base}"
             )
         else:
-            return (
-                f"対話相手からの最新の意見は以下の通りです：\n"
-                f"「{opponent_speech}」\n\n"
-                f"これに対するあなたの反論や同意、新たな視点を「{OUTPUT_FILE}」に書き込んでください。\n"
-                f"{instruction_base}"
-            )
+            if agent_name == "a":
+                return (
+                    f"重要：対話相手からの最新の意見が提示されました。これに対するあなたの意見や議論を深める視点を {OUTPUT_FILE} に書き込んでください。\n"
+                    f"{instruction_base}"
+                )
+            else:
+                return (
+                    f"重要：対話相手からの最新の意見が提示されました。これに対するあなたの反論や同意、新たな視点を {OUTPUT_FILE} に書き込んでください。\n"
+                    f"{instruction_base}"
+                )
 
 def print_file_content(label, filepath):
     if not os.path.exists(filepath):
@@ -249,16 +287,14 @@ def main():
         if os.path.exists(cache_dir):
             try: shutil.rmtree(cache_dir)
             except OSError: pass
-            
-        # リファクタリングにより不要になった input.txt があれば削除
-        inp_file_path = os.path.join(dir_name, "input.txt")
-        if os.path.exists(inp_file_path):
-            try:
-                os.chmod(inp_file_path, 0o644)
-                os.remove(inp_file_path)
-            except OSError: pass
     
-    # ファイルの初期化
+    # ファイルの初期化（読み取り専用でロック、多言語対応）
+    initial_msg_a = "Discussion started: Please state your first opinion." if is_eng else "（ディスカッション開始：最初の意見を述べてください）"
+    initial_msg_b = "Waiting for the opponent to start the discussion..." if is_eng else "（対話相手の開始をお待ちください）"
+    
+    write_input_file("sandbox/LeaderAI", THEME, initial_msg_a)
+    write_input_file("sandbox/WorkerAI", THEME, initial_msg_b)
+    
     with open(os.path.join("sandbox/LeaderAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
         f.write(PLACEHOLDER)
     with open(os.path.join("sandbox/WorkerAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
@@ -288,17 +324,19 @@ def main():
     restore_files("a")
     restore_files("b")
     
-    # 起動オプションから input.txt の引数を完全に排除
+    # 起動オプションで直接 read-only/edit ファイルを指定し、履歴ファイルも各ディレクトリ内に隔離
+    # --no-show-model-warnings を追加して警告・起動時プロンプトを抑制
+    # --llm-history-file .aider.llm.history を追加してLLMとの生対話ログを記録
     aider_cmd_a = (
         f"aider --model {MODEL} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
-        f"--file {OUTPUT_FILE} "
+        f"--read {INPUT_FILE} --file {OUTPUT_FILE} "
         "--read persona_a.txt --read manifest_a.txt "
         "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
         "--llm-history-file .aider.llm.history --no-restore-chat-history"
     )
     aider_cmd_b = (
         f"aider --model {MODEL} --no-git --no-auto-lint --yes-always --no-show-model-warnings --no-pretty "
-        f"--file {OUTPUT_FILE} "
+        f"--read {INPUT_FILE} --file {OUTPUT_FILE} "
         "--read persona_b.txt --read manifest_b.txt "
         "--chat-history-file .aider.chat.history.md --input-history-file .aider.input.history "
         "--llm-history-file .aider.llm.history --no-restore-chat-history"
@@ -322,7 +360,7 @@ def main():
     print_file_content("Aider B Manifest", "sandbox/WorkerAI/manifest_b.txt")
     
     # 最初の指示プロンプト
-    prompt_a = build_prompt("a", "", is_first=True)
+    prompt_a = build_prompt("a", is_first=True)
     
     print("Aider A に対話を開始します...")
     send_keys(pane_a, prompt_a)
@@ -339,15 +377,17 @@ def main():
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
             f.write(f"### Aider A\n\n{response_a}\n\n")
             
-        # Aの出力を空にする (次の対話の準備)
+        # 次のターンの準備 (Aの出力をBの入力に書き込み、Aの出力を空にする)
+        write_input_file("sandbox/WorkerAI", THEME, response_a)
+        
         with open(os.path.join("sandbox/LeaderAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
             f.write(PLACEHOLDER)
             
         # Aider B のターンが始まる前に、Aider B 用のペルソナ・マニフェストを強制復元（クリーンアップ）
         restore_files("b")
         
-        # Bに対して指示 (Aの発言をプロンプト内に直接埋め込む)
-        prompt_b = build_prompt("b", response_a)
+        # Bに対して指示
+        prompt_b = build_prompt("b")
         send_keys(pane_b, prompt_b)
         
         # --------------------------------------------------
@@ -359,7 +399,9 @@ def main():
         with open(CONVERSATION, 'a', encoding='utf-8') as f:
             f.write(f"### Aider B\n\n{response_b}\n\n")
             
-        # Bの出力を空にする (次の対話の準備)
+        # 次のターンの準備 (Bの出力をAの入力に書き込み、Bの出力を空にする)
+        write_input_file("sandbox/LeaderAI", THEME, response_b)
+        
         with open(os.path.join("sandbox/WorkerAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
             f.write(PLACEHOLDER)
             
@@ -368,7 +410,7 @@ def main():
         
         # 最終ラリーでなければ、次のラリーのために A に対話指示を送る
         if rally < MAX_RALLIES:
-            prompt_a = build_prompt("a", response_b)
+            prompt_a = build_prompt("a")
             send_keys(pane_a, prompt_a)
 
     # --------------------------------------------------
@@ -380,25 +422,25 @@ def main():
     with open(CONVERSATION, 'r', encoding='utf-8') as f:
         conv_history = f.read()
         
-    # 2. LeaderAI の output.txt をクリア
+    # 2. LeaderAI の input.txt にこれまでの会話履歴を書き込む
+    write_input_file("sandbox/LeaderAI", THEME, conv_history)
+        
+    # 3. LeaderAI の output.txt をクリア
     with open(os.path.join("sandbox/LeaderAI", OUTPUT_FILE), 'w', encoding='utf-8') as f:
         f.write(PLACEHOLDER)
         
-    # 3. 要約指示プロンプトの作成 (全ログを直接埋め込む)
+    # 4. 要約指示プロンプトの作成
     if is_eng:
         summary_prompt = (
-            f"Below is the complete conversation history of the discussion:\n\n"
-            f"\"\"\"\n{conv_history}\n\"\"\"\n\n"
-            f"Please read the logs carefully, summarize the discussion objectively (main points of disagreement and agreement) and write the final conclusion in '{OUTPUT_FILE}' in English.\n"
+            f"IMPORTANT: Read the discussion logs (full conversation history) carefully.\n"
+            f"Summarize the discussion objectively (main points of disagreement and agreement) and write the final conclusion in '{OUTPUT_FILE}' in English.\n"
             f"No extra greetings or explanations are needed.\n"
             f"[CRITICAL] Modifying files MUST be done ONLY on '{OUTPUT_FILE}'. NEVER create or edit any other files.\n"
             f"Please keep your chat response on this screen brief, such as 'Done'."
         )
     else:
         summary_prompt = (
-            f"以下はこれまでのディスカッションの全発言履歴ログです：\n\n"
-            f"\"\"\"\n{conv_history}\n\"\"\"\n\n"
-            f"この内容を慎重に読み、これまでの議論の客観的な要約（主な対立点や合意点）および最終的な結論をまとめ、「{OUTPUT_FILE}」に日本語で書き込んでください。\n"
+            f"重要：提示されたディスカッションのログ（全発言履歴）を慎重に読み、これまでの議論の客観的な要約（主な対立点や合意点）および最終的な結論をまとめ、{OUTPUT_FILE} に日本語で書き込んでください。\n"
             f"余計な挨拶や説明は一切不要です。\n"
             f"【絶対厳守】変更は必ず「{OUTPUT_FILE}」に対してのみ行ってください。他のファイルは絶対に作成・編集しないでください。\n"
             f"チャットの応答メッセージ（この画面に表示される返答）は、「完了しました」などの簡潔な一言のみを返してください。"
