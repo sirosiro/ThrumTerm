@@ -4,6 +4,7 @@ import os
 import time
 import subprocess
 import shutil
+import json
 
 # ==============================================================================
 # Global Constants & Input Parsing
@@ -66,9 +67,12 @@ class TmuxSession:
                 continue
                 
             is_prompt = False
-            # Check if the last line ends with prompt character '>'
-            if len(lines) >= 1 and lines[-1].strip() == '>':
-                is_prompt = True
+            # Check if the last line ends with prompt character '>' or shell markers like '%' or '$'
+            # after Aider exits
+            if len(lines) >= 1:
+                last_line = lines[-1].strip()
+                if last_line == '>' or last_line.endswith('%') or last_line.endswith('$'):
+                    is_prompt = True
                 
             if is_prompt:
                 # Wait longer if confirmation dialogs (Yes/No) are blocking the prompt
@@ -268,25 +272,6 @@ class PromptFactory:
                     f"{instruction_base}"
                 )
 
-    @staticmethod
-    def build_summary_instruction(theme: str) -> str:
-        is_eng = LanguageDetector.is_english(theme)
-        output_file = InputOutputController.OUTPUT_FILE
-        
-        if is_eng:
-            return (
-                f"IMPORTANT: Read the discussion logs (full conversation history) carefully.\n"
-                f"Summarize the discussion objectively (main points of disagreement and agreement) and write the final conclusion in '{output_file}' in English.\n"
-                f"No extra greetings or explanations are needed.\n"
-                f"[CRITICAL] Modifying files MUST be done ONLY on '{output_file}'. NEVER create or edit any other files."
-            )
-        else:
-            return (
-                f"重要：提示されたディスカッションのログ（全発言履歴）を慎重に読み、これまでの議論の客観的な要約（主な対立点や合意点）および最終的な結論をまとめ、{output_file} に日本語で書き込んでください。\n"
-                f"余計な挨拶や説明は一切不要です。\n"
-                f"【絶対厳守】変更は必ず「{output_file}」に対してのみ行ってください。他のファイルは絶対に作成・編集しないでください。"
-            )
-
 
 # ==============================================================================
 # Discussion Orchestrator (Coordinator)
@@ -423,37 +408,110 @@ class DiscussionCoordinator:
                 TmuxSession.send_keys(self.pane_a, prompt_a)
                 
     def generate_summary(self):
-        """Instructs Agent A to read the discussion log and compile a final summary."""
-        print("\n--- ディスカッション完了。議論の要約と最終結論を作成中... ---")
+        """Instructs a neutral LLM via direct Ollama API call using a temp script in the tail pane to compile a final summary."""
+        print("\n--- ディスカッション完了。Aiderプロセスを終了し、要約の作成を開始します... ---")
         
-        with open(CONVERSATION, 'r', encoding='utf-8') as f:
-            conv_history = f.read()
-            
-        # Write full log as raw text to LeaderAI's input.txt for summary task
-        self.io_a.write_raw_input(conv_history)
-        
-        # Re-create empty output.txt for A before summary compilation
-        self.io_a.create_empty_output()
-        
-        summary_prompt = PromptFactory.build_summary_instruction(self.theme)
-        TmuxSession.send_keys(self.pane_a, summary_prompt)
-        
-        TmuxSession.wait_for_prompt_stable(self.pane_a)
-        summary_response = self.io_a.read_output()
-        
-        with open(CONVERSATION, 'a', encoding='utf-8') as f:
-            if self.is_eng:
-                f.write(f"## Discussion Summary and Final Conclusion\n\n{summary_response}\n\n")
-            else:
-                f.write(f"## 議論の要約と最終結論\n\n{summary_response}\n\n")
-                
-        print(f"要約と最終結論が {CONVERSATION} に追記されました。")
-        
-    def shutdown(self):
-        """Sends exit command to stop Aider client processes clean."""
+        # 1. Shutdown Aider clients safely
         print("Aiderエージェントを終了しています...")
         TmuxSession.send_keys(self.pane_a, "/exit")
         TmuxSession.send_keys(self.pane_b, "/exit")
+        time.sleep(3)  # Wait for Aider client shutdown
+        
+        # 2. Stop log trailing pane
+        print("ログ監視（tail）を停止しています...")
+        TmuxSession.send_keys(self.pane_tail, "C-c")
+        time.sleep(1)  # Wait for shell prompt to return
+        
+        # Strip provider prefix to get bare Ollama model name (e.g. ollama_chat/gemma2:9b -> gemma2:9b)
+        ollama_model = self.model.replace("ollama_chat/", "")
+        
+        # 3. Create a temporary helper python script to call Ollama API directly.
+        # This completely avoids shell quoting and JSON escaping syntax errors on tmux command execution.
+        temp_script_path = "temp_summary.py"
+        temp_script_content = (
+            "import urllib.request\n"
+            "import json\n"
+            "import sys\n\n"
+            "def main():\n"
+            "    theme = sys.argv[1]\n"
+            "    is_eng = sys.argv[2] == 'True'\n"
+            "    model = sys.argv[3]\n"
+            "    log_file = sys.argv[4]\n\n"
+            "    try:\n"
+            "        with open(log_file, 'r', encoding='utf-8') as f:\n"
+            "            conv_history = f.read()\n"
+            "    except Exception as e:\n"
+            "        sys.exit(f'Error reading {log_file}: {e}')\n\n"
+            "    if is_eng:\n"
+            "        summary_prompt = (\n"
+            "            f'Please read the following discussion logs (full conversation history) carefully.\\n'\n"
+            "            f'Analyze the debate objectively as a neutral moderator and write a summary (key disagreements, agreements) and a final conclusion in English.\\n'\n"
+            "            f'Output ONLY the body of your summary. Do not output any greetings, markdown formatting (```), or prefaces.\\n\\n'\n"
+            "            f'\"\"\"\\n{conv_history}\\n\"\"\"'\n"
+            "        )\n"
+            "    else:\n"
+            "        summary_prompt = (\n"
+            "            f'これまでの技術討論の全ログ（発言履歴）を慎重に読み、特定の立場に偏ることなく、客観的な第三者（中立のモデレーター）として以下の要点を整理し、日本語で要約および最終結論を作成してください。\\n'\n"
+            "            f'1. 討論の主な論点と対立点\\n'\n"
+            "            f'2. 両者が合意に至った、または歩み寄った点\\n'\n"
+            "            f'3. 最終的な結論と今後の展望\\n'\n"
+            "            f'挨拶、前置き、バックティック（```）によるマークダウンコードブロックは一切不要です。要約の本文のみを直接出力してください。\\n\\n'\n"
+            "            f'\"\"\"\\n{conv_history}\\n\"\"\"'\n"
+            "        )\n\n"
+            "    url = 'http://localhost:11434/api/generate'\n"
+            "    data = {\n"
+            "        'model': model,\n"
+            "        'prompt': summary_prompt,\n"
+            "        'stream': False\n"
+            "    }\n\n"
+            "    try:\n"
+            "        req = urllib.request.Request(\n"
+            "            url, \n"
+            "            data=json.dumps(data).encode('utf-8'), \n"
+            "            headers={'Content-Type': 'application/json'}\n"
+            "        )\n"
+            "        with urllib.request.urlopen(req) as res:\n"
+            "            response_text = json.loads(res.read().decode('utf-8'))['response']\n"
+            "            sys.stdout.buffer.write(response_text.encode('utf-8'))\n"
+            "    except Exception as e:\n"
+            "        sys.exit(f'Error querying Ollama API: {e}')\n\n"
+            "if __name__ == '__main__':\n"
+            "    main()\n"
+        )
+        
+        # Write the temporary script to root
+        with open(temp_script_path, 'w', encoding='utf-8') as f:
+            f.write(temp_script_content)
+            
+        print("中立のAI（Ollama）を起動し、要約を作成しています...")
+        # Write section divider header first
+        with open(CONVERSATION, 'a', encoding='utf-8') as f:
+            if self.is_eng:
+                f.write("\n## Discussion Summary and Final Conclusion\n\n")
+            else:
+                f.write("\n## 議論の要約と最終結論\n\n")
+                
+        # 5. Execute the temporary script via pane_tail redirecting stdout to CONVERSATION
+        run_cmd = f"python3 {temp_script_path} \"{self.theme}\" \"{self.is_eng}\" \"{ollama_model}\" \"{CONVERSATION}\" >> {CONVERSATION}"
+        TmuxSession.send_keys(self.pane_tail, run_cmd)
+        
+        # Wait for the python execution to finish and shell prompt to return stable
+        TmuxSession.wait_for_prompt_stable(self.pane_tail)
+        
+        # 6. Cleanup temporary script
+        if os.path.exists(temp_script_path):
+            try: os.remove(temp_script_path)
+            except OSError: pass
+            
+        print(f"要約と最終結論が {CONVERSATION} に追記されました。")
+        
+        # 7. Display the entire final discussion log in the tail pane for visibility
+        print("最終ディスカッションログを表示します...")
+        TmuxSession.send_keys(self.pane_tail, f"cat {CONVERSATION}")
+        TmuxSession.wait_for_prompt_stable(self.pane_tail)
+        
+    def shutdown(self):
+        """Final cleanup of the discussion environment."""
         print("ディスカッション環境を終了します。")
         
     def _prepare_configs(self):

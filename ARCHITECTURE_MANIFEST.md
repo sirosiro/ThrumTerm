@@ -45,6 +45,9 @@
 - **2026-06-29: ディレクトリ階層ごとのマニフェスト分割（フラクタル構造）の導入**
   - *Decision*: agent_configs/ および sandbox/ ディレクトリにそれぞれサブ・マニフェストを配置する。
   - *Rationale*: プロジェクトが成長した際の単一マニフェスト肥大化を避け、スコープをディレクトリドメインに限定してAIのハルシネーションを防ぐため。
+- **2026-06-29: 中立AIによる外部要約と監視ペイン再利用の採用**
+  - *Decision*: Aiderプロセス終了後に `tail` ペインに `Ctrl+C` を送信して停止させ、そこで Ollama API ワンライナーを中立AIとして起動して要約を `>>` 追記する。
+  - *Rationale*: 討論人格による要約バイアスを完全に排除し、かつAiderのファイル更新エラーリスクをゼロにするため。
 
 ### 3. AIとの協調に関する指針 (AI Collaboration Policy)
 - **未知の問題への対処**: 憲章に記述のない事象（例: tmux内の特定の表示例外等）に直面した場合、AIは独断で場当たり的修正を行わず、複数の解決策とトレードオフを人間に提示し、判断を仰ぐこと。
@@ -77,12 +80,15 @@ classDiagram
 ```
 
 - **DiscussionCoordinator (主要オーケストレーター)**
-  - **責務**: 全体のライフサイクル管理、tmuxの3ペイン（LeaderAI / WorkerAI / tailペイン）の起動、および指定されたラリー数に基づく討論の同期実行制御。
+  - **責務**: 全体のライフサイクル管理、tmuxの3ペイン（LeaderAI / WorkerAI / tailペイン）の起動、指定されたラリー数に基づく討論の同期実行、および独立した中立AIによる討論要約の実行。
   - **提供する主要API**:
     - `setup_environment()`: ログファイル (`discussion_log.md`) の初期化、設定ディレクトリ (`agent_configs/`) の自動生成、および `sandbox/` ディレクトリの完全な初期化。
     - `start_panes_and_aider()`: 擬似端末ペインを起動し、エージェントごとに `--read AGENTS.md` オプションを明示的に付与したAiderクライアントプロセスを非同期起動する。
     - `run_discussion()`: A/Bエージェント間で、空ファイル配置（`create_empty_output`）→プロンプト送信→待機（`wait_for_prompt_stable`）→応答回収→移動（`move_to_opponent_input`）のループを同期的に繰り返す。
-    - `generate_summary()`: 全討論履歴ログを LeaderAI に生のインプットとして引き渡し、最終的な要約・結論を生成させて `discussion_log.md` の末尾に追記する。
+    - `generate_summary()`: 
+      1. 討論終了後、Aiderプロセス（LeaderAI / WorkerAI）に `/exit` を送って安全に終了させる。
+      2. `tail` でログ監視を行っていた第3ペイン (`pane_tail`) に対し `Ctrl+C` を送信してログ監視を終了させる。
+      3. `pane_tail` で、指定された Ollama API を叩く Python ワンライナーを中立AI（ペルソナなし）として実行し、生成された要約を `discussion_log.md` へリダイレクト追記（`>>`）する。
 
 - **TmuxSession (端末操作アダプター)**
   - **責務**: `tmux` プログラムのシステムプロセス呼び出しをカプセル化し、キー送信とペイン状態監視を行う。
@@ -93,10 +99,6 @@ classDiagram
   - **責務**: 討論テーマに日本語文字（ひらがな・カタカナ・漢字）が含まれるかを検知し、エージェントの適用言語（日・英）を判断する。
 
 ### 5. 既知の未解決課題と保留事項 (Known Open Issues & Deferred Decisions)
-- **Issue: 要約ログ出力先メッセージの不一致バグの修正**
-  - *Status*: 保留（本発言考古学レポートの承認後に修正予定）。
-  - *Rationale*: 設計考古学プロセスを優先し、コード変更前にマニフェストとレポートの承認を得るため。
-  - *Trigger*: 人間による本 `ARCHITECTURE_MANIFEST.md` の第1版の承認完了。
 - **Issue: Aider接続切断時の自動再接続処理**
   - *Status*: 保留。
   - *Rationale*: プロトタイプ段階であり、接続エラー発生時は手動でtmuxセッションを閉じて再起動する方がコストが低いため。
